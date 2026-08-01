@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>To-Do List</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #1f2328;
+    --muted: #6b7280;
+    --border: #e2e4e9;
+    --accent: #4f46e5;
+    --accent-hover: #4338ca;
+    --danger: #dc2626;
+    --overdue: #dc2626;
+    --overdue-bg: #fef2f2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px 16px 60px;
+  }
+  .container {
+    max-width: 720px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 1.6rem;
+    margin: 0 0 20px;
+    text-align: center;
+  }
+  .add-form {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 20px;
+    display: grid;
+    gap: 10px;
+  }
+  .add-form .row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  @media (min-width: 560px) {
+    .add-form .row.fields {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  input[type="text"], input[type="date"], select, textarea {
+    font: inherit;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--text);
+    width: 100%;
+  }
+  textarea {
+    resize: vertical;
+    min-height: 40px;
+  }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-secondary {
+    background: #eef0f4;
+    color: var(--text);
+  }
+  .btn-secondary:hover { background: #e2e4e9; }
+  .btn-danger {
+    background: transparent;
+    color: var(--danger);
+  }
+  .btn-danger:hover { text-decoration: underline; }
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .toolbar label {
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .toolbar select {
+    width: auto;
+  }
+  .count {
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  ul.task-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+  }
+  li.task {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  li.task.overdue {
+    border-color: var(--overdue);
+    background: var(--overdue-bg);
+  }
+  li.task.completed {
+    opacity: 0.6;
+  }
+  .task-main {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .task-main input[type="checkbox"] {
+    margin-top: 4px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+  .task-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .task-text {
+    font-size: 1rem;
+    word-break: break-word;
+    cursor: text;
+  }
+  li.task.completed .task-text {
+    text-decoration: line-through;
+  }
+  .task-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: 0.8rem;
+    color: var(--muted);
+    align-items: center;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #eef0f4;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .due-badge {
+    cursor: pointer;
+  }
+  .due-badge.overdue {
+    color: var(--overdue);
+    font-weight: 600;
+  }
+  .comment-text {
+    cursor: text;
+    font-style: italic;
+  }
+  .comment-text.empty {
+    color: #a1a5ad;
+  }
+  .task-actions {
+    display: flex;
+    gap: 10px;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+  .edit-input {
+    width: 100%;
+    margin-bottom: 4px;
+  }
+  .empty-state {
+    text-align: center;
+    color: var(--muted);
+    padding: 40px 0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d;
+      --card: #1f2229;
+      --text: #e6e8eb;
+      --muted: #9aa0aa;
+      --border: #2c303a;
+      --overdue-bg: #2a1616;
+    }
+    input[type="text"], input[type="date"], select, textarea {
+      background: #14161b;
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .btn-secondary { background: #2a2e37; color: var(--text); }
+    .btn-secondary:hover { background: #343947; }
+    .badge { background: #2a2e37; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>To-Do List</h1>
+
+  <form class="add-form" id="add-form">
+    <input type="text" id="new-text" placeholder="What needs to be done?" required maxlength="200">
+    <div class="row fields">
+      <input type="date" id="new-due">
+      <select id="new-category">
+        <option value="Personal">Personal</option>
+        <option value="Work">Work</option>
+        <option value="Shopping">Shopping</option>
+        <option value="Health">Health</option>
+        <option value="Other">Other</option>
+      </select>
+    </div>
+    <textarea id="new-comment" placeholder="Comment (optional)"></textarea>
+    <button type="submit" class="btn-primary">Add Task</button>
+  </form>
+
+  <div class="toolbar">
+    <div>
+      <label for="filter-category">Filter: </label>
+      <select id="filter-category">
+        <option value="All">All Categories</option>
+        <option value="Personal">Personal</option>
+        <option value="Work">Work</option>
+        <option value="Shopping">Shopping</option>
+        <option value="Health">Health</option>
+        <option value="Other">Other</option>
+      </select>
+    </div>
+    <div class="count" id="task-count"></div>
+  </div>
+
+  <ul class="task-list" id="task-list"></ul>
+  <div class="empty-state" id="empty-state" style="display:none;">No tasks yet. Add one above.</div>
+</div>
+
+<script>
+(function () {
+  const STORAGE_KEY = 'todoAppTasks';
+  const CATEGORIES = ['Personal', 'Work', 'Shopping', 'Health', 'Other'];
+
+  const taskList = document.getElementById('task-list');
+  const emptyState = document.getElementById('empty-state');
+  const taskCount = document.getElementById('task-count');
+  const addForm = document.getElementById('add-form');
+  const newText = document.getElementById('new-text');
+  const newDue = document.getElementById('new-due');
+  const newCategory = document.getElementById('new-category');
+  const newComment = document.getElementById('new-comment');
+  const filterCategory = document.getElementById('filter-category');
+
+  let tasks = loadTasks();
+
+  function loadTasks() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveTasks() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+  }
+
+  function makeId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  function todayStr() {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0, 10);
+  }
+
+  function isOverdue(task) {
+    if (task.completed || !task.dueDate) return false;
+    return task.dueDate < todayStr();
+  }
+
+  function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function render() {
+    const filter = filterCategory.value;
+    const visibleTasks = tasks.filter(t => filter === 'All' || t.category === filter);
+
+    taskList.innerHTML = '';
+    emptyState.style.display = tasks.length === 0 ? 'block' : 'none';
+
+    const total = tasks.length;
+    const completed = tasks.filter(t => t.completed).length;
+    taskCount.textContent = total ? `${completed} of ${total} complete` : '';
+
+    visibleTasks.forEach(task => {
+      const li = document.createElement('li');
+      li.className = 'task' + (task.completed ? ' completed' : '') + (isOverdue(task) ? ' overdue' : '');
+      li.dataset.id = task.id;
+
+      const main = document.createElement('div');
+      main.className = 'task-main';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = task.completed;
+      checkbox.addEventListener('change', () => toggleComplete(task.id));
+      main.appendChild(checkbox);
+
+      const content = document.createElement('div');
+      content.className = 'task-content';
+
+      const textEl = document.createElement('div');
+      textEl.className = 'task-text';
+      textEl.textContent = task.text;
+      textEl.title = 'Click to edit';
+      textEl.addEventListener('click', () => editText(task.id, li));
+      content.appendChild(textEl);
+
+      const meta = document.createElement('div');
+      meta.className = 'task-meta';
+
+      const dueBadge = document.createElement('span');
+      dueBadge.className = 'badge due-badge' + (isOverdue(task) ? ' overdue' : '');
+      dueBadge.textContent = task.dueDate ? (isOverdue(task) ? 'Overdue: ' : 'Due: ') + formatDate(task.dueDate) : 'Set due date';
+      dueBadge.title = 'Click to edit due date';
+      dueBadge.addEventListener('click', () => editDueDate(task.id, li));
+      meta.appendChild(dueBadge);
+
+      const catBadge = document.createElement('span');
+      catBadge.className = 'badge category-badge';
+      catBadge.textContent = task.category;
+      catBadge.title = 'Click to change category';
+      catBadge.addEventListener('click', () => editCategory(task.id, li));
+      meta.appendChild(catBadge);
+
+      const commentEl = document.createElement('span');
+      commentEl.className = 'comment-text' + (task.comment ? '' : ' empty');
+      commentEl.textContent = task.comment || 'Add comment';
+      commentEl.title = 'Click to edit comment';
+      commentEl.addEventListener('click', () => editComment(task.id, li));
+      meta.appendChild(commentEl);
+
+      content.appendChild(meta);
+      main.appendChild(content);
+
+      const actions = document.createElement('div');
+      actions.className = 'task-actions';
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn-danger';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', () => deleteTask(task.id));
+      actions.appendChild(deleteBtn);
+      main.appendChild(actions);
+
+      li.appendChild(main);
+      taskList.appendChild(li);
+    });
+  }
+
+  function findTask(id) {
+    return tasks.find(t => t.id === id);
+  }
+
+  function toggleComplete(id) {
+    const task = findTask(id);
+    if (!task) return;
+    task.completed = !task.completed;
+    saveTasks();
+    render();
+  }
+
+  function deleteTask(id) {
+    tasks = tasks.filter(t => t.id !== id);
+    saveTasks();
+    render();
+  }
+
+  function editText(id, li) {
+    const task = findTask(id);
+    if (!task) return;
+    const textEl = li.querySelector('.task-text');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'edit-input';
+    input.value = task.text;
+    input.maxLength = 200;
+    textEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const commit = () => {
+      const val = input.value.trim();
+      task.text = val || task.text;
+      saveTasks();
+      render();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { render(); }
+    });
+  }
+
+  function editDueDate(id, li) {
+    const task = findTask(id);
+    if (!task) return;
+    const badge = li.querySelector('.due-badge');
+    const input = document.createElement('input');
+    input.type = 'date';
+    input.className = 'edit-input';
+    input.value = task.dueDate || '';
+    badge.replaceWith(input);
+    input.focus();
+
+    const commit = () => {
+      task.dueDate = input.value || '';
+      saveTasks();
+      render();
+    };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { render(); }
+    });
+  }
+
+  function editCategory(id, li) {
+    const task = findTask(id);
+    if (!task) return;
+    const badge = li.querySelector('.category-badge');
+    const select = document.createElement('select');
+    select.className = 'edit-input';
+    CATEGORIES.forEach(cat => {
+      const opt = document.createElement('option');
+      opt.value = cat;
+      opt.textContent = cat;
+      if (cat === task.category) opt.selected = true;
+      select.appendChild(opt);
+    });
+    badge.replaceWith(select);
+    select.focus();
+
+    const commit = () => {
+      task.category = select.value;
+      saveTasks();
+      render();
+    };
+    select.addEventListener('change', commit);
+    select.addEventListener('blur', commit);
+  }
+
+  function editComment(id, li) {
+    const task = findTask(id);
+    if (!task) return;
+    const commentEl = li.querySelector('.comment-text');
+    const textarea = document.createElement('textarea');
+    textarea.className = 'edit-input';
+    textarea.value = task.comment || '';
+    commentEl.replaceWith(textarea);
+    textarea.focus();
+
+    const commit = () => {
+      task.comment = textarea.value.trim();
+      saveTasks();
+      render();
+    };
+    textarea.addEventListener('blur', commit);
+    textarea.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { render(); }
+    });
+  }
+
+  addForm.addEventListener('submit', e => {
+    e.preventDefault();
+    const text = newText.value.trim();
+    if (!text) return;
+    tasks.push({
+      id: makeId(),
+      text,
+      completed: false,
+      dueDate: newDue.value || '',
+      category: newCategory.value,
+      comment: newComment.value.trim()
+    });
+    saveTasks();
+    newText.value = '';
+    newDue.value = '';
+    newCategory.value = 'Personal';
+    newComment.value = '';
+    render();
+    newText.focus();
+  });
+
+  filterCategory.addEventListener('change', render);
+
+  render();
+})();
+</script>
+</body>
+</html>
