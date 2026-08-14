@@ -69,6 +69,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.0.2
         version: 19.2.4(@types/react@19.2.18)
+      prisma:
+        specifier: ^6.3.1
+        version: 6.19.3(typescript@5.9.3)
       tailwindcss:
         specifier: ^4.0.0
         version: 4.3.3
@@ -128,13 +131,6 @@ importers:
 
   packages/db:
     dependencies:
-      '@prisma/client':
-        specifier: ^6.3.1
-        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
-      bcryptjs:
-        specifier: ^2.4.3
-        version: 2.4.3
-    devDependencies:
       '@frodocodo/ledger':
         specifier: workspace:*
         version: link:../ledger
@@ -144,6 +140,13 @@ importers:
       '@frodocodo/shared':
         specifier: workspace:*
         version: link:../shared
+      '@prisma/client':
+        specifier: ^6.3.1
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      bcryptjs:
+        specifier: ^2.4.3
+        version: 2.4.3
+    devDependencies:
       '@types/bcryptjs':
         specifier: ^2.4.6
         version: 2.4.6

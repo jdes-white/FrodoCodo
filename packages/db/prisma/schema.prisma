@@ -2,8 +2,11 @@
 // Domain model per project spec §36. Money is always Decimal — never Float.
 
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/client"
+  provider      = "prisma-client-js"
+  // "native" covers local dev; rhel-openssl-3.0.x covers Vercel's serverless
+  // runtime — without it, deploys build fine but crash at runtime looking
+  // for a query-engine binary that was never generated for that platform.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

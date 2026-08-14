@@ -71,6 +71,24 @@ spec's non-negotiables — the short version is below.
 
 ## Architecture rules
 
+- **Prisma Client generates to its default location** (`node_modules/@prisma/client`,
+  imported as `from "@prisma/client"` in `packages/db/src/index.ts`) — not
+  a custom `output` path. This was changed specifically to deploy cleanly
+  on Vercel: a custom output path outside `node_modules` is a known source
+  of Next.js build-tracing failures on serverless platforms (the
+  query-engine binary silently missing from the deployed function). Don't
+  reintroduce a custom `output` in `packages/db/prisma/schema.prisma`
+  without re-testing a real Vercel deploy. See `docs/deployment.md`.
+- `packages/db/package.json`'s `"postinstall": "prisma generate"` is what
+  makes the Prisma Client exist after `pnpm install` on a machine that's
+  never run `prisma generate` manually (every CI/deploy environment,
+  including Vercel). Don't remove it.
+- **Seeding never runs automatically on deploy.** `apps/web/package.json`'s
+  `vercel-build` script runs `prisma migrate deploy` (safe, idempotent) but
+  deliberately not seeding — `seedDemoHousehold` (`packages/db/src/seedHousehold.ts`)
+  wipes existing households first, so it only runs on demand via
+  `POST /api/admin/seed` (token-gated by `SEED_TOKEN`). Never wire seeding
+  into a build/deploy step.
 - `packages/domain`, `packages/ledger`, `packages/providers`, `packages/ai`,
   and `packages/shared` must never import from `@frodocodo/db`, Next.js, or
   React. They're pure TypeScript, unit-tested in isolation. If a function
