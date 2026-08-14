@@ -6,7 +6,7 @@ import {
   formatCalendarDate,
   parseCalendarDate,
   type CalendarDate,
-} from "./dateOnly.js";
+} from "@frodocodo/shared";
 
 export interface BudgetPeriodBounds {
   startDate: CalendarDate;

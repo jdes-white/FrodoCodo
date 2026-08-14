@@ -10,6 +10,9 @@ import Decimal from "decimal.js";
  */
 export type Money = Decimal;
 
+/** Anything `toMoney` accepts — the type public APIs should take from callers. */
+export type MoneyInput = Decimal.Value;
+
 export function toMoney(value: Decimal.Value): Money {
   return new Decimal(value);
 }
@@ -27,7 +30,7 @@ export function clampMin(value: Money, min: Money = ZERO): Money {
 export function formatAUD(value: Money): string {
   const negative = value.isNegative();
   const abs = value.abs().toFixed(2);
-  const [whole, cents] = abs.split(".");
+  const [whole, cents] = abs.split(".") as [string, string];
   const withThousands = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return `${negative ? "-" : ""}$${withThousands}.${cents}`;
 }

@@ -1,18 +1,18 @@
-import { toMoney, ZERO, clampMin, percentage, type Money } from "@frodocodo/shared";
+import { toMoney, ZERO, clampMin, percentage, type Money, type MoneyInput } from "@frodocodo/shared";
 import type { PacingStatus, SpendingType } from "@frodocodo/shared";
-import { daysBetween, parseCalendarDate, formatCalendarDate, type CalendarDate } from "./dateOnly.js";
+import { daysBetween, parseCalendarDate, formatCalendarDate, type CalendarDate } from "@frodocodo/shared";
 import type { BudgetPeriodBounds } from "./budgetPeriod.js";
 
 export interface PacingInput {
   period: BudgetPeriodBounds;
   asOf: CalendarDate;
-  allocation: Money;
-  spentToDate: Money;
+  allocation: MoneyInput;
+  spentToDate: MoneyInput;
   spendingType?: SpendingType;
   /** Day-of-month a FIXED_COMMITMENT is expected to post; drives a step (not linear) expected curve. */
   fixedDueDayOfMonth?: number;
   /** Spend within the trailing window, used for velocity. Falls back to a to-date average when omitted. */
-  trailingSpend?: Money;
+  trailingSpend?: MoneyInput;
   trailingWindowDays?: number;
   /** Fraction of allocation within which spend-vs-expected is considered "on track" (default 5%). */
   varianceThresholdRatio?: number;

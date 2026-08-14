@@ -1,13 +1,15 @@
 /**
  * Calendar-date-only arithmetic (no time-of-day, no local-timezone drift).
- * Budget periods are defined in whole household-local days, so every
- * calculation here operates on "YYYY-MM-DD" strings via UTC-midnight Dates —
- * using local Date arithmetic would shift period boundaries across DST changes.
+ * Budget periods and provider sync windows are defined in whole
+ * household-local days, so every calculation here operates on "YYYY-MM-DD"
+ * strings via UTC-midnight Dates — local Date arithmetic would shift period
+ * boundaries across DST changes.
  */
 export type CalendarDate = string; // "YYYY-MM-DD"
 
 export function parseCalendarDate(value: CalendarDate): Date {
-  const [y, m, d] = value.split("-").map(Number);
+  const parts = value.split("-").map(Number);
+  const [y, m, d] = [parts[0]!, parts[1]!, parts[2]!];
   return new Date(Date.UTC(y, m - 1, d));
 }
 

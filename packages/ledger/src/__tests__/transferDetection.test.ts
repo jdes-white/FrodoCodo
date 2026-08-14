@@ -28,7 +28,7 @@ describe("detectTransferPairs", () => {
 
     const matches = detectTransferPairs(candidates);
     expect(matches).toHaveLength(1);
-    expect(matches[0].kind).toBe("INTER_ACCOUNT_TRANSFER");
+    expect(matches[0]!.kind).toBe("INTER_ACCOUNT_TRANSFER");
   });
 
   it("does not match a debit and credit on the same account against each other", () => {

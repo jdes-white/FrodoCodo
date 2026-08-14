@@ -1,0 +1,98 @@
+import type {
+  AccountType,
+  ConnectionMethod,
+  ConsentStatus,
+  TransactionDirection,
+  TransactionStatus,
+} from "@frodocodo/shared";
+import type { Money } from "@frodocodo/shared";
+
+/**
+ * The internal normalized financial-data interface (§7). The rest of the
+ * application talks to this interface only — never to a bank- or
+ * aggregator-specific schema — so the aggregator can be swapped (or a
+ * second one added) without touching the budgeting engine.
+ */
+
+export interface ProviderInstitution {
+  providerInstitutionId: string;
+  name: string;
+  shortName: string;
+  /**
+   * How this specific institution/product is reachable today. CDR where
+   * available; CREDENTIAL_BASED only as a documented fallback until the
+   * institution joins the Consumer Data Right (see docs/provider-integration.md
+   * for the Amex-specific timeline).
+   */
+  connectionMethod: ConnectionMethod;
+}
+
+export interface ProviderAccount {
+  providerAccountId: string;
+  displayName: string;
+  accountType: AccountType;
+  currency: string;
+  currentBalance: Money;
+  availableBalance: Money;
+}
+
+export interface ProviderTransaction {
+  /** Null for some pending transactions on some providers — dedupe must tolerate this (§10). */
+  providerTransactionId: string | null;
+  accountProviderId: string;
+  transactionDate: string; // YYYY-MM-DD
+  postingDate: string | null;
+  amount: Money; // positive magnitude
+  direction: TransactionDirection;
+  status: TransactionStatus;
+  description: string;
+  /** Provider-enriched merchant/category, when available (classification Layer 3, §11). */
+  enrichedMerchant?: string;
+  enrichedCategory?: string;
+  /** Preserved verbatim for audit/debugging (§9) — never shown to end users directly. */
+  raw?: unknown;
+}
+
+export interface ConsentInfo {
+  status: ConsentStatus;
+  grantedAt?: string;
+  expiresAt?: string;
+}
+
+export interface ProviderSyncError {
+  accountProviderId?: string;
+  code: string;
+  message: string;
+}
+
+export interface ProviderSyncResult {
+  accounts: ProviderAccount[];
+  transactions: ProviderTransaction[];
+  syncedAt: string;
+  errors: ProviderSyncError[];
+}
+
+export interface InitiateConnectionResult {
+  providerConnectionId: string;
+  /** Present for CDR/OAuth-style flows the user is redirected through. */
+  redirectUrl?: string;
+}
+
+/**
+ * Every aggregator adapter (MockProvider, BasiqProvider, ...) implements
+ * this. Nothing outside packages/providers should import a provider-specific
+ * module directly.
+ */
+export interface FinancialDataProvider {
+  readonly id: string;
+
+  listSupportedInstitutions(): Promise<ProviderInstitution[]>;
+  initiateConnection(institutionId: string): Promise<InitiateConnectionResult>;
+  getConsentStatus(providerConnectionId: string): Promise<ConsentInfo>;
+  discoverAccounts(providerConnectionId: string): Promise<ProviderAccount[]>;
+  syncTransactions(
+    providerConnectionId: string,
+    options: { sinceDate?: string; accountProviderIds?: string[] },
+  ): Promise<ProviderSyncResult>;
+  disconnectConnection(providerConnectionId: string): Promise<void>;
+}
