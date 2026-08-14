@@ -1,0 +1,612 @@
+// FrodoCodo — Household Financial Operating System
+// Domain model per project spec §36. Money is always Decimal — never Float.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum HouseholdRole {
+  ADMIN
+  MEMBER
+}
+
+enum AccountType {
+  TRANSACTION
+  CREDIT_CARD
+  SAVINGS
+  OTHER
+}
+
+enum ConnectionMethod {
+  CDR
+  CREDENTIAL_BASED
+  MANUAL
+}
+
+enum ConsentStatus {
+  PENDING
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  REVOKED
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+enum SyncTrigger {
+  SCHEDULED
+  MANUAL
+  INITIAL_IMPORT
+}
+
+enum TransactionDirection {
+  DEBIT
+  CREDIT
+}
+
+enum TransactionStatus {
+  PENDING
+  POSTED
+}
+
+enum ClassificationSource {
+  RULE
+  LEARNED_MAPPING
+  PROVIDER
+  AI
+  USER
+  SYSTEM
+}
+
+enum SpendingType {
+  FIXED_COMMITMENT
+  FLEXIBLE
+  SAVINGS
+}
+
+enum BudgetPeriodType {
+  CALENDAR_MONTH
+  ANCHORED_MONTHLY
+  FORTNIGHTLY
+  CUSTOM
+}
+
+enum BudgetPeriodStatus {
+  ACTIVE
+  CLOSED
+  FUTURE
+}
+
+enum InsightType {
+  PACING
+  PROJECTED_OVERSPEND
+  UNUSUAL_CATEGORY_INCREASE
+  UNUSUAL_MERCHANT_INCREASE
+  SPENDING_SPIKE
+  RECURRING_DETECTED
+  SUBSCRIPTION_DETECTED
+  DUPLICATE_LOOKING_CHARGE
+  UNUSUALLY_LARGE_TRANSACTION
+  CATEGORY_TREND
+  DISCRETIONARY_TREND
+  INCOME_CHANGE
+  FIXED_COST_CHANGE
+  FORGOTTEN_SUBSCRIPTION
+  PERIOD_OVER_PERIOD_COMPARISON
+}
+
+enum InsightSeverity {
+  INFO
+  NOTICE
+  WARNING
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum NotificationType {
+  CATEGORY_APPROACHING_BUDGET
+  OVERSPEND_RISK
+  UNUSUAL_LARGE_TRANSACTION
+  SYNC_FAILURE
+  REVIEW_QUEUE_ITEM
+  PROJECTED_OUTCOME_DETERIORATION
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+}
+
+enum IncomeFrequency {
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+  IRREGULAR
+}
+
+// ---------- Household & users ----------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships     HouseholdMember[]
+  auditEvents     AuditEvent[]
+  aiConversations AIConversation[]
+  aiMessages      AIMessage[]
+  notificationPreferences NotificationPreference[]
+  classifications TransactionClassification[]
+  merchantRules   MerchantRule[]
+}
+
+model Household {
+  id                     String           @id @default(cuid())
+  name                   String
+  defaultBudgetPeriodType BudgetPeriodType @default(CALENDAR_MONTH)
+  budgetAnchorDay        Int?
+  timezone               String           @default("Australia/Brisbane")
+  onboardingCompletedAt  DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  members            HouseholdMember[]
+  institutions       FinancialConnection[]
+  categories         Category[]
+  buckets            BudgetBucket[]
+  budgetPeriods      BudgetPeriod[]
+  incomeSources      IncomeSource[]
+  fixedCommitments   FixedCommitment[]
+  savingsGoals       SavingsGoal[]
+  insights           Insight[]
+  aiConversations    AIConversation[]
+  notificationPrefs  NotificationPreference[]
+  auditEvents        AuditEvent[]
+  merchants          Merchant[]
+  merchantRules      MerchantRule[]
+}
+
+model HouseholdMember {
+  id          String        @id @default(cuid())
+  householdId String
+  userId      String
+  role        HouseholdRole @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, userId])
+  @@index([userId])
+}
+
+// ---------- Financial institutions & connections ----------
+
+model FinancialInstitution {
+  id                       String   @id @default(cuid())
+  name                     String
+  shortName                String
+  country                  String   @default("AU")
+  logoUrl                  String?
+  supportedConnectionMethod ConnectionMethod
+  providerInstitutionId    String
+  providerName             String
+  createdAt                DateTime @default(now())
+
+  connections FinancialConnection[]
+
+  @@unique([providerName, providerInstitutionId])
+}
+
+model FinancialConnection {
+  id                   String           @id @default(cuid())
+  householdId          String
+  institutionId        String
+  providerName         String
+  providerConnectionId String
+  connectionMethod     ConnectionMethod
+  consentStatus        ConsentStatus    @default(PENDING)
+  consentGrantedAt     DateTime?
+  consentExpiresAt     DateTime?
+  lastSyncedAt         DateTime?
+  isActive             Boolean          @default(true)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  household   Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  institution FinancialInstitution  @relation(fields: [institutionId], references: [id])
+  accounts    Account[]
+  syncRuns    SyncRun[]
+
+  @@index([householdId])
+}
+
+model Account {
+  id                  String      @id @default(cuid())
+  connectionId        String
+  providerAccountId   String
+  displayName         String
+  accountType         AccountType
+  currency            String      @default("AUD")
+  currentBalance      Decimal?    @db.Decimal(14, 2)
+  availableBalance    Decimal?    @db.Decimal(14, 2)
+  isIncludedInBudget  Boolean     @default(true)
+  lastSyncedAt        DateTime?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  connection   FinancialConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  fixedCommitments FixedCommitment[]
+
+  @@unique([connectionId, providerAccountId])
+}
+
+model SyncRun {
+  id                    String      @id @default(cuid())
+  connectionId          String
+  trigger               SyncTrigger
+  status                SyncStatus  @default(PENDING)
+  startedAt             DateTime    @default(now())
+  completedAt           DateTime?
+  accountsSynced        Int         @default(0)
+  transactionsImported  Int         @default(0)
+  transactionsUpdated   Int         @default(0)
+  errorMessage          String?
+
+  connection   FinancialConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([connectionId, startedAt])
+}
+
+// ---------- Merchants ----------
+
+model Merchant {
+  id               String   @id @default(cuid())
+  householdId      String
+  normalizedName   String
+  matchKey         String
+  defaultCategoryId String?
+  isRecurring      Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  household       Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  defaultCategory Category?     @relation(fields: [defaultCategoryId], references: [id])
+  transactions    Transaction[]
+  rules           MerchantRule[]
+
+  @@unique([householdId, matchKey])
+}
+
+model MerchantRule {
+  id           String   @id @default(cuid())
+  householdId  String
+  merchantId   String
+  categoryId   String
+  priority     Int      @default(100)
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  household  Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  category   Category  @relation(fields: [categoryId], references: [id])
+  createdBy  User?     @relation(fields: [createdById], references: [id])
+
+  @@unique([householdId, merchantId])
+}
+
+// ---------- Budget hierarchy ----------
+
+model BudgetBucket {
+  id          String   @id @default(cuid())
+  householdId String
+  name        String
+  sortOrder   Int      @default(0)
+  colorToken  String   @default("neutral")
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  household  Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  categories Category[]
+
+  @@unique([householdId, name])
+}
+
+model Category {
+  id           String       @id @default(cuid())
+  householdId  String
+  bucketId     String
+  name         String
+  spendingType SpendingType @default(FLEXIBLE)
+  sortOrder    Int          @default(0)
+  isArchived   Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  bucket             BudgetBucket        @relation(fields: [bucketId], references: [id])
+  transactions       Transaction[]
+  classifications    TransactionClassification[]
+  allocations        BudgetAllocation[]
+  merchantDefaults   Merchant[]
+  merchantRules      MerchantRule[]
+  fixedCommitments   FixedCommitment[]
+  savingsGoals       SavingsGoal[]
+
+  @@unique([householdId, name])
+  @@index([bucketId])
+}
+
+model BudgetPeriod {
+  id          String             @id @default(cuid())
+  householdId String
+  type        BudgetPeriodType
+  startDate   DateTime           @db.Date
+  endDate     DateTime           @db.Date
+  status      BudgetPeriodStatus @default(ACTIVE)
+  expectedIncome Decimal         @default(0) @db.Decimal(14, 2)
+  bufferAmount   Decimal         @default(0) @db.Decimal(14, 2)
+  createdAt   DateTime           @default(now())
+
+  household   Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  allocations BudgetAllocation[]
+  insights    Insight[]
+
+  @@unique([householdId, startDate, endDate])
+  @@index([householdId, status])
+}
+
+model BudgetAllocation {
+  id             String   @id @default(cuid())
+  budgetPeriodId String
+  categoryId     String
+  amount         Decimal  @db.Decimal(14, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  budgetPeriod BudgetPeriod @relation(fields: [budgetPeriodId], references: [id], onDelete: Cascade)
+  category     Category     @relation(fields: [categoryId], references: [id])
+
+  @@unique([budgetPeriodId, categoryId])
+}
+
+model IncomeSource {
+  id                String          @id @default(cuid())
+  householdId       String
+  name              String
+  expectedAmount    Decimal         @db.Decimal(14, 2)
+  frequency         IncomeFrequency
+  nextExpectedDate  DateTime?       @db.Date
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+model FixedCommitment {
+  id                  String   @id @default(cuid())
+  householdId         String
+  categoryId          String
+  accountId           String?
+  name                String
+  expectedAmount      Decimal  @db.Decimal(14, 2)
+  expectedDueDayOfMonth Int?
+  frequency           IncomeFrequency @default(MONTHLY)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category  Category  @relation(fields: [categoryId], references: [id])
+  account   Account?  @relation(fields: [accountId], references: [id])
+}
+
+model SavingsGoal {
+  id           String    @id @default(cuid())
+  householdId  String
+  categoryId   String?
+  name         String
+  targetAmount Decimal   @db.Decimal(14, 2)
+  targetDate   DateTime? @db.Date
+  currentAmount Decimal  @default(0) @db.Decimal(14, 2)
+  priority     Int       @default(0)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category  Category? @relation(fields: [categoryId], references: [id])
+}
+
+// ---------- Transactions (canonical model, spec §9) ----------
+
+model Transaction {
+  id                     String               @id @default(cuid())
+  accountId              String
+  syncRunId              String?
+  providerTransactionId  String?
+  institutionTransactionRef String?
+
+  transactionDate  DateTime @db.Date
+  postingDate      DateTime? @db.Date
+  amount           Decimal  @db.Decimal(14, 2) // always positive magnitude
+  direction        TransactionDirection
+  status           TransactionStatus @default(POSTED)
+
+  originalDescription String
+  normalizedMerchantId String?
+  merchantConfidence   Float?
+
+  categoryId             String?
+  classificationConfidence Float?
+  classificationSource     ClassificationSource?
+  isUserOverridden         Boolean @default(false)
+
+  notes String?
+
+  isRecurring         Boolean @default(false)
+  isTransfer          Boolean @default(false)
+  transferGroupId     String?
+  counterpartTransactionId String? @unique
+
+  isExcludedFromBudget Boolean @default(false)
+
+  refundOfTransactionId String?
+
+  rawProviderPayload Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account          Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  syncRun          SyncRun?      @relation(fields: [syncRunId], references: [id])
+  merchant         Merchant?     @relation(fields: [normalizedMerchantId], references: [id])
+  category         Category?     @relation(fields: [categoryId], references: [id])
+  classifications  TransactionClassification[]
+  counterpart      Transaction?  @relation("TransferCounterpart", fields: [counterpartTransactionId], references: [id])
+  counterpartOf     Transaction? @relation("TransferCounterpart")
+  refundOf         Transaction?  @relation("RefundChain", fields: [refundOfTransactionId], references: [id])
+  refunds          Transaction[] @relation("RefundChain")
+  insightEvidence  InsightEvidence[]
+
+  @@unique([accountId, providerTransactionId])
+  @@index([accountId, transactionDate])
+  @@index([categoryId])
+  @@index([status])
+  @@index([isExcludedFromBudget])
+}
+
+model TransactionClassification {
+  id             String               @id @default(cuid())
+  transactionId  String
+  categoryId     String
+  source         ClassificationSource
+  confidence     Float
+  ruleId         String?
+  createdByUserId String?
+  isCurrent      Boolean              @default(true)
+  createdAt      DateTime             @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  category    Category    @relation(fields: [categoryId], references: [id])
+  createdBy   User?       @relation(fields: [createdByUserId], references: [id])
+
+  @@index([transactionId])
+}
+
+// ---------- Insights ----------
+
+model Insight {
+  id             String          @id @default(cuid())
+  householdId    String
+  budgetPeriodId String?
+  type           InsightType
+  severity       InsightSeverity @default(INFO)
+  title          String
+  summary        String
+  dedupeKey      String
+  isDismissed    Boolean         @default(false)
+  isRead         Boolean         @default(false)
+  generatedAt    DateTime        @default(now())
+
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  budgetPeriod BudgetPeriod? @relation(fields: [budgetPeriodId], references: [id])
+  evidence     InsightEvidence[]
+
+  @@unique([householdId, dedupeKey])
+  @@index([householdId, generatedAt])
+}
+
+model InsightEvidence {
+  id            String   @id @default(cuid())
+  insightId     String
+  label         String
+  transactionId String?
+  value         Decimal? @db.Decimal(14, 2)
+  metadata      Json?
+
+  insight     Insight      @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+}
+
+// ---------- AI ----------
+
+model AIConversation {
+  id          String   @id @default(cuid())
+  householdId String
+  userId      String
+  title       String   @default("New conversation")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
+  messages  AIMessage[]
+}
+
+model AIMessage {
+  id              String        @id @default(cuid())
+  conversationId  String
+  userId          String?
+  role            AIMessageRole
+  content         String
+  contextSnapshot Json?
+  createdAt       DateTime      @default(now())
+
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User?          @relation(fields: [userId], references: [id])
+}
+
+// ---------- Notifications ----------
+
+model NotificationPreference {
+  id          String              @id @default(cuid())
+  householdId String
+  userId      String
+  type        NotificationType
+  channel     NotificationChannel @default(IN_APP)
+  isEnabled   Boolean             @default(true)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@unique([householdId, userId, type, channel])
+}
+
+// ---------- Audit ----------
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  householdId  String
+  actorUserId  String?
+  action       String
+  entityType   String
+  entityId     String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorUserId], references: [id])
+
+  @@index([householdId, createdAt])
+}

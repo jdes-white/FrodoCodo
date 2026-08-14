@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+.next/
+.turbo/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+apps/web/.next/
+packages/db/generated/
+packages/db/prisma/dev.db
+.vscode/

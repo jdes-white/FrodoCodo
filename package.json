@@ -1,0 +1,25 @@
+{
+  "name": "frodocodo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Household Financial Operating System",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @frodocodo/web dev",
+    "dev:worker": "pnpm --filter @frodocodo/worker dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:unit": "pnpm --filter './packages/**' test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @frodocodo/db generate",
+    "db:migrate": "pnpm --filter @frodocodo/db migrate",
+    "db:seed": "pnpm --filter @frodocodo/db seed",
+    "db:up": "docker compose up -d postgres"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
