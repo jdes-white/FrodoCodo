@@ -22,16 +22,28 @@ interface MockConnectionState {
   dataset: { accounts: ProviderAccount[]; transactions: ProviderTransaction[] } | null;
 }
 
+const ID_PREFIX = "mock";
+const ID_SEPARATOR = "::";
+
 /**
  * Generates realistic CBA/Virgin Money/Amex-shaped synthetic data so the
  * whole product can be built, tested and demoed with zero live credentials
  * (§55). Implements the exact same FinancialDataProvider interface a real
  * aggregator adapter (e.g. Basiq) would — swapping providers is a config
  * change, not a rewrite (§7).
+ *
+ * A real aggregator's backend remembers a connection regardless of which of
+ * our server processes calls it (the seed script, a web request, the
+ * worker — different Node processes, same persisted providerConnectionId).
+ * This class has no shared backend, so the institutionId is encoded into
+ * the connection ID itself and state is lazily reconstructed from it on
+ * first use in a given process — the one exception being an explicitly
+ * disconnected connection, which stays revoked for this process's lifetime.
  */
 export class MockProvider implements FinancialDataProvider {
   readonly id = "mock";
   private connections = new Map<string, MockConnectionState>();
+  private disconnected = new Set<string>();
   private connectionCounter = 1;
 
   async listSupportedInstitutions(): Promise<ProviderInstitution[]> {
@@ -39,12 +51,8 @@ export class MockProvider implements FinancialDataProvider {
   }
 
   async initiateConnection(institutionId: string): Promise<InitiateConnectionResult> {
-    const providerConnectionId = `mock-conn-${this.connectionCounter++}`;
-    this.connections.set(providerConnectionId, {
-      institutionId,
-      consent: { status: "ACTIVE", grantedAt: new Date().toISOString(), expiresAt: oneYearFromNow() },
-      dataset: null,
-    });
+    const providerConnectionId = `${ID_PREFIX}${ID_SEPARATOR}${institutionId}${ID_SEPARATOR}${this.connectionCounter++}`;
+    this.connections.set(providerConnectionId, this.freshState(institutionId));
     return { providerConnectionId };
   }
 
@@ -90,19 +98,45 @@ export class MockProvider implements FinancialDataProvider {
 
   async disconnectConnection(providerConnectionId: string): Promise<void> {
     this.connections.delete(providerConnectionId);
+    this.disconnected.add(providerConnectionId);
   }
 
   private ensureDataset(state: MockConnectionState) {
     if (!state.dataset) {
-      state.dataset = generateHouseholdDataset({ asOfDate: todayUTC(), monthsOfHistory: 4 });
+      state.dataset = generateHouseholdDataset({ asOfDate: todayUTC(), monthsOfHistory: 4, seed: 7 });
     }
     return state.dataset;
   }
 
+  private freshState(institutionId: string): MockConnectionState {
+    return {
+      institutionId,
+      consent: { status: "ACTIVE", grantedAt: new Date().toISOString(), expiresAt: oneYearFromNow() },
+      dataset: null,
+    };
+  }
+
   private requireConnection(providerConnectionId: string): MockConnectionState {
-    const state = this.connections.get(providerConnectionId);
-    if (!state) throw new Error(`Unknown mock connection: ${providerConnectionId}`);
+    const existing = this.connections.get(providerConnectionId);
+    if (existing) return existing;
+
+    if (this.disconnected.has(providerConnectionId)) {
+      throw new Error(`Connection ${providerConnectionId} has been disconnected`);
+    }
+
+    const institutionId = this.parseInstitutionId(providerConnectionId);
+    if (!institutionId) throw new Error(`Unknown mock connection: ${providerConnectionId}`);
+
+    const state = this.freshState(institutionId);
+    this.connections.set(providerConnectionId, state);
     return state;
+  }
+
+  private parseInstitutionId(providerConnectionId: string): string | null {
+    const parts = providerConnectionId.split(ID_SEPARATOR);
+    if (parts.length !== 3 || parts[0] !== ID_PREFIX) return null;
+    const institutionId = parts[1]!;
+    return MOCK_INSTITUTIONS.some((inst) => inst.providerInstitutionId === institutionId) ? institutionId : null;
   }
 
   private accountBelongsToInstitution(accountProviderId: string, institutionId: string): boolean {

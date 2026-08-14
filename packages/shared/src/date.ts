@@ -31,7 +31,7 @@ export function daysBetween(from: CalendarDate, to: CalendarDate): number {
 
 export function clampDate(value: CalendarDate, min: CalendarDate, max: CalendarDate): CalendarDate {
   if (daysBetween(min, value) < 0) return min;
-  if (daysBetween(max, value) < 0) return max;
+  if (daysBetween(value, max) < 0) return max;
   return value;
 }
 

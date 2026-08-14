@@ -294,7 +294,7 @@ model Merchant {
   updatedAt        DateTime @updatedAt
 
   household       Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  defaultCategory Category?     @relation(fields: [defaultCategoryId], references: [id])
+  defaultCategory Category?     @relation(fields: [defaultCategoryId], references: [id], onDelete: SetNull)
   transactions    Transaction[]
   rules           MerchantRule[]
 
@@ -312,7 +312,7 @@ model MerchantRule {
 
   household  Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
-  category   Category  @relation(fields: [categoryId], references: [id])
+  category   Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   createdBy  User?     @relation(fields: [createdById], references: [id])
 
   @@unique([householdId, merchantId])
@@ -346,7 +346,7 @@ model Category {
   createdAt    DateTime     @default(now())
 
   household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  bucket             BudgetBucket        @relation(fields: [bucketId], references: [id])
+  bucket             BudgetBucket        @relation(fields: [bucketId], references: [id], onDelete: Cascade)
   transactions       Transaction[]
   classifications    TransactionClassification[]
   allocations        BudgetAllocation[]
@@ -387,7 +387,7 @@ model BudgetAllocation {
   updatedAt      DateTime @updatedAt
 
   budgetPeriod BudgetPeriod @relation(fields: [budgetPeriodId], references: [id], onDelete: Cascade)
-  category     Category     @relation(fields: [categoryId], references: [id])
+  category     Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
   @@unique([budgetPeriodId, categoryId])
 }
@@ -418,8 +418,8 @@ model FixedCommitment {
   createdAt           DateTime @default(now())
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  category  Category  @relation(fields: [categoryId], references: [id])
-  account   Account?  @relation(fields: [accountId], references: [id])
+  category  Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  account   Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
 }
 
 model SavingsGoal {
@@ -435,7 +435,7 @@ model SavingsGoal {
   createdAt    DateTime  @default(now())
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  category  Category? @relation(fields: [categoryId], references: [id])
+  category  Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 }
 
 // ---------- Transactions (canonical model, spec §9) ----------
@@ -479,13 +479,13 @@ model Transaction {
   updatedAt DateTime @updatedAt
 
   account          Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  syncRun          SyncRun?      @relation(fields: [syncRunId], references: [id])
-  merchant         Merchant?     @relation(fields: [normalizedMerchantId], references: [id])
-  category         Category?     @relation(fields: [categoryId], references: [id])
+  syncRun          SyncRun?      @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+  merchant         Merchant?     @relation(fields: [normalizedMerchantId], references: [id], onDelete: SetNull)
+  category         Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   classifications  TransactionClassification[]
-  counterpart      Transaction?  @relation("TransferCounterpart", fields: [counterpartTransactionId], references: [id])
+  counterpart      Transaction?  @relation("TransferCounterpart", fields: [counterpartTransactionId], references: [id], onDelete: SetNull)
   counterpartOf     Transaction? @relation("TransferCounterpart")
-  refundOf         Transaction?  @relation("RefundChain", fields: [refundOfTransactionId], references: [id])
+  refundOf         Transaction?  @relation("RefundChain", fields: [refundOfTransactionId], references: [id], onDelete: SetNull)
   refunds          Transaction[] @relation("RefundChain")
   insightEvidence  InsightEvidence[]
 
@@ -508,7 +508,7 @@ model TransactionClassification {
   createdAt      DateTime             @default(now())
 
   transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  category    Category    @relation(fields: [categoryId], references: [id])
+  category    Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   createdBy   User?       @relation(fields: [createdByUserId], references: [id])
 
   @@index([transactionId])
@@ -530,7 +530,7 @@ model Insight {
   generatedAt    DateTime        @default(now())
 
   household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  budgetPeriod BudgetPeriod? @relation(fields: [budgetPeriodId], references: [id])
+  budgetPeriod BudgetPeriod? @relation(fields: [budgetPeriodId], references: [id], onDelete: SetNull)
   evidence     InsightEvidence[]
 
   @@unique([householdId, dedupeKey])
@@ -546,7 +546,7 @@ model InsightEvidence {
   metadata      Json?
 
   insight     Insight      @relation(fields: [insightId], references: [id], onDelete: Cascade)
-  transaction Transaction? @relation(fields: [transactionId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
 }
 
 // ---------- AI ----------

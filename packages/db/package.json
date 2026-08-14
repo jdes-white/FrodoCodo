@@ -20,9 +20,15 @@
     "test": "echo skip"
   },
   "dependencies": {
-    "@prisma/client": "^6.3.1"
+    "@prisma/client": "^6.3.1",
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
+    "@frodocodo/ledger": "workspace:*",
+    "@frodocodo/providers": "workspace:*",
+    "@frodocodo/shared": "workspace:*",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.10.5",
     "prisma": "^6.3.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"

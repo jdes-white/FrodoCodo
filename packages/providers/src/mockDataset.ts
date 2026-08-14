@@ -124,7 +124,7 @@ export function generateHouseholdDataset(options: GenerateDatasetOptions): Gener
         makeTx(nextId("shp"), MOCK_ACCOUNT_IDS.virginCreditCard, cursor, round2(between(rng, 25, 220)), "DEBIT", "POSTED", pick(rng, SHOPPING_MERCHANTS)),
       );
     }
-    if (chance(rng, 0.04)) {
+    if (chance(rng, 0.1)) {
       const account = chance(rng, 0.5) ? MOCK_ACCOUNT_IDS.virginCreditCard : MOCK_ACCOUNT_IDS.amexCreditCard;
       transactions.push(
         makeTx(nextId("amb"), account, cursor, round2(between(rng, 15, 90)), "DEBIT", "POSTED", pick(rng, AMBIGUOUS_MERCHANTS)),
@@ -135,7 +135,7 @@ export function generateHouseholdDataset(options: GenerateDatasetOptions): Gener
   // --- Refunds: occasionally reverse a prior shopping/dining purchase on the same card ---
   const refundCandidates = transactions.filter((t) => t.description.match(/KMART|TARGET|AMAZON|JB HI-FI/i));
   for (const purchase of refundCandidates) {
-    if (chance(rng, 0.08)) {
+    if (chance(rng, 0.2)) {
       const refundDate = addDays(purchase.transactionDate, Math.floor(between(rng, 3, 14)));
       if (daysBetween(refundDate, asOf) >= 0) {
         const partial = chance(rng, 0.3);

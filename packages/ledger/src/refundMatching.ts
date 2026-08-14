@@ -1,5 +1,5 @@
 import type { TransactionDirection } from "@frodocodo/shared";
-import { toMoney, type Money } from "@frodocodo/shared";
+import { toMoney, type MoneyInput } from "@frodocodo/shared";
 
 /**
  * §39: a refund should net against its original purchase's merchant/category
@@ -11,7 +11,7 @@ export interface RefundCandidate {
   id: string;
   accountId: string;
   merchantMatchKey: string | null;
-  amount: Money; // positive magnitude
+  amount: MoneyInput; // positive magnitude
   direction: TransactionDirection;
   transactionDate: string; // YYYY-MM-DD
 }

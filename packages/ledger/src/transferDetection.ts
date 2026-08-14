@@ -1,5 +1,5 @@
 import type { AccountType, TransactionDirection } from "@frodocodo/shared";
-import { toMoney, type Money } from "@frodocodo/shared";
+import { toMoney, type Money, type MoneyInput } from "@frodocodo/shared";
 
 /**
  * §38: a credit-card purchase is spending; the later payment from the bank
@@ -17,7 +17,7 @@ export interface TransferCandidate {
   id: string;
   accountId: string;
   accountType: AccountType;
-  amount: Money; // positive magnitude
+  amount: MoneyInput; // positive magnitude
   direction: TransactionDirection;
   transactionDate: string; // YYYY-MM-DD
 }

@@ -45,4 +45,34 @@ describe("MockProvider", () => {
     expect(recent.transactions.length).toBeLessThanOrEqual(full.transactions.length);
     expect(recent.transactions.every((t) => t.transactionDate >= "2026-08-01")).toBe(true);
   });
+
+  it("reconstructs a connection created by a different process/instance from its persisted ID", async () => {
+    // Mirrors reality: the seed script and the background worker are separate
+    // Node processes, each with their own MockProvider instance, but both
+    // must be able to act on a providerConnectionId persisted to the DB by
+    // the other. A real aggregator's backend remembers the connection
+    // regardless of which of our processes calls it — this asserts the mock
+    // behaves the same way instead of throwing "unknown connection".
+    const seedProcessProvider = new MockProvider();
+    const { providerConnectionId } = await seedProcessProvider.initiateConnection("amex-au");
+
+    const workerProcessProvider = new MockProvider();
+    const accounts = await workerProcessProvider.discoverAccounts(providerConnectionId);
+    expect(accounts.map((a) => a.accountType)).toEqual(["CREDIT_CARD"]);
+
+    const sync = await workerProcessProvider.syncTransactions(providerConnectionId, {});
+    expect(sync.transactions.length).toBeGreaterThan(0);
+  });
+
+  it("rejects an unrecognizable connection ID", async () => {
+    const provider = new MockProvider();
+    await expect(provider.getConsentStatus("not-a-real-id")).rejects.toThrow();
+  });
+
+  it("keeps a disconnected connection revoked even after reconstruction would otherwise succeed", async () => {
+    const provider = new MockProvider();
+    const { providerConnectionId } = await provider.initiateConnection("cba");
+    await provider.disconnectConnection(providerConnectionId);
+    await expect(provider.discoverAccounts(providerConnectionId)).rejects.toThrow();
+  });
 });

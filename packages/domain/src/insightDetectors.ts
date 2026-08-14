@@ -1,4 +1,4 @@
-import { formatAUD, percentage, type Money } from "@frodocodo/shared";
+import { formatAUD, percentage, toMoney, type Money, type MoneyInput } from "@frodocodo/shared";
 import type { PacingResult } from "./pacing.js";
 
 /**
@@ -119,7 +119,7 @@ export interface MerchantOccurrence {
   transactionId: string;
   merchantMatchKey: string;
   merchantName: string;
-  amount: Money;
+  amount: MoneyInput;
   transactionDate: string; // YYYY-MM-DD
 }
 
@@ -153,7 +153,7 @@ export function detectRecurringMerchants(occurrences: MerchantOccurrence[]): Rec
     const isRegular = intervals.every((d) => Math.abs(d - avgInterval) <= RECURRING_INTERVAL_TOLERANCE_DAYS);
     if (!isRegular) continue;
 
-    const amounts = sorted.map((o) => o.amount.toNumber());
+    const amounts = sorted.map((o) => toMoney(o.amount).toNumber());
     const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
     const isSameAmount = amounts.every((a) => Math.abs(a - avgAmount) / avgAmount <= SUBSCRIPTION_AMOUNT_TOLERANCE_RATIO);
 
@@ -182,11 +182,12 @@ export function recurringFindingsToInsights(findings: RecurringMerchantFinding[]
 // ---------- Unusually large transaction ----------
 
 export function detectUnusuallyLargeTransactions(
-  transactions: Array<{ transactionId: string; merchantName: string; amount: Money; categoryAverage: Money }>,
+  transactions: Array<{ transactionId: string; merchantName: string; amount: MoneyInput; categoryAverage: MoneyInput }>,
   multiplierThreshold = 3,
   periodKey: string,
 ): DetectedInsight[] {
   return transactions
+    .map((t) => ({ ...t, amount: toMoney(t.amount), categoryAverage: toMoney(t.categoryAverage) }))
     .filter((t) => t.categoryAverage.greaterThan(0) && t.amount.dividedBy(t.categoryAverage).greaterThanOrEqualTo(multiplierThreshold))
     .map((t) => ({
       type: "UNUSUALLY_LARGE_TRANSACTION" as const,
@@ -205,13 +206,15 @@ export interface DuplicateLookingCandidate {
   accountId: string;
   merchantMatchKey: string;
   merchantName: string;
-  amount: Money;
+  amount: MoneyInput;
   transactionDate: string;
 }
 
 export function detectDuplicateLookingCharges(candidates: DuplicateLookingCandidate[], windowDays = 1): DetectedInsight[] {
   const insights: DetectedInsight[] = [];
-  const sorted = [...candidates].sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
+  const sorted = [...candidates]
+    .map((c) => ({ ...c, amount: toMoney(c.amount) }))
+    .sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
 
   for (let i = 0; i < sorted.length; i++) {
     for (let j = i + 1; j < sorted.length; j++) {
