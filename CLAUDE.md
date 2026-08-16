@@ -71,15 +71,17 @@ spec's non-negotiables — the short version is below.
 
 ## Architecture rules
 
-- **`vercel.json` at the repo root makes deployment independent of Vercel's
-  Root Directory dashboard setting.** It explicitly sets `buildCommand`
-  (`pnpm --filter @frodocodo/web run vercel-build`), `installCommand`, and
-  `outputDirectory` (`apps/web/.next`), so the build works whether Root
-  Directory is left blank (repo root) or set to `apps/web` — in the latter
-  case Vercel's zero-config Next.js detection finds `apps/web/package.json`'s
-  own `vercel-build` script directly and `vercel.json` is simply never read
-  (Vercel only looks for it at the configured Root Directory). Keep both
-  working if you touch either. See `docs/deployment.md`.
+- **No root-level `vercel.json`.** One was tried to make deployment
+  independent of Vercel's Root Directory setting and made things worse:
+  Vercel reads a repo-root `vercel.json` even when Root Directory is set to
+  a subfolder, and resolves its path fields *relative to Root Directory* —
+  so `outputDirectory: "apps/web/.next"` resolved to the nonexistent
+  `apps/web/apps/web/.next`. The project-root convention is Root
+  Directory=`apps/web` in the Vercel dashboard (not fixable from the repo);
+  `apps/web/package.json`'s own `vercel-build` script is the build entry
+  point Vercel finds automatically via zero-config Next.js detection — no
+  vercel.json, no dashboard Build/Install/Output overrides. See
+  `docs/deployment.md`.
 - **Prisma Client generates to its default location** (`node_modules/@prisma/client`,
   imported as `from "@prisma/client"` in `packages/db/src/index.ts`) — not
   a custom `output` path. This was changed specifically to deploy cleanly
