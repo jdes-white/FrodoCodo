@@ -54,18 +54,34 @@ in place, and stay in place if you touch these files:
    the build succeeds but the deployed app crashes at runtime on the first
    database query.
 3. **Migrations run automatically on every deploy, seeding does not.**
-   `apps/web/package.json` has a `vercel-build` script (Vercel uses this
-   instead of `build` automatically, if present):
-   `prisma migrate deploy --schema=../../packages/db/prisma/schema.prisma
-   && next build`. `migrate deploy` only applies pending migrations — safe
-   and idempotent on every push. Seeding is deliberately **not** part of
-   this: it wipes existing households first (see
+   `apps/web/package.json`'s `vercel-build` script (Vercel uses this
+   instead of `build` automatically, if present) runs
+   `apps/web/scripts/vercel-build.mjs`, which does `prisma migrate deploy`
+   then `next build`. `migrate deploy` only applies pending migrations —
+   safe and idempotent on every push. Seeding is deliberately **not** part
+   of this: it wipes existing households first (see
    `packages/db/src/seedHousehold.ts`), so running it on every deploy would
    erase real usage data. Seeding instead runs on demand via
    `POST /api/admin/seed` (`apps/web/app/api/admin/seed/route.ts`),
    protected by a `SEED_TOKEN` env var — this also means the database
    connection string never has to leave Vercel's own environment variable
    store to populate demo data.
+4. **The database connection string's env var name isn't assumed.**
+   Depending on how a Postgres integration provisions the database, the
+   connection string can land under different names — `DATABASE_URL`,
+   `POSTGRES_PRISMA_URL`/`POSTGRES_URL` (pooled), or
+   `DATABASE_URL_UNPOOLED`/`POSTGRES_URL_NON_POOLING` (direct). Guessing
+   wrong means a silent "environment variable not found" failure.
+   `packages/db/scripts/resolveDatabaseUrl.mjs` checks all of them; the
+   build wrapper (`apps/web/scripts/vercel-build.mjs`) and the `postinstall`
+   wrapper (`packages/db/scripts/generate.mjs`) both use it for build-time
+   Prisma CLI calls, preferring a **direct/unpooled** connection for
+   `migrate deploy` specifically (Prisma's migration engine needs one —
+   advisory locks don't work reliably through pgbouncer's transaction
+   pooling mode). The running app (`packages/db/src/index.ts`) does the
+   same resolution at runtime via `new PrismaClient({ datasourceUrl })`,
+   preferring the **pooled** connection there (better suited to
+   serverless's many short-lived connections).
 
 ## Environment variables
 
