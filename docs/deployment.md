@@ -30,9 +30,26 @@ alternative for this app. See the chat history / `docs/product-decisions.md`
 for the account-creation and public-accessibility tradeoffs that were
 explicitly confirmed before deploying.
 
+## Why deploys weren't happening (diagnosed, not guessed)
+
+Vercel kept serving the very first commit (`2889a60`, pre-dating this whole
+app) no matter what got pushed. The repo-side diagnosis: `main` has **zero**
+commits since that initial import — all real work lives on
+`claude/household-financial-os-90nezc`, currently 7+ commits ahead. Vercel
+only auto-builds on pushes to its configured **Production Branch**. If that
+setting is still `main` (its default when a project is first imported), it
+is *correctly* doing nothing — there's nothing new on `main` to build. This
+setting lives only in Vercel's project database, not in this repo, so it
+cannot be fixed by a commit — see the "One thing that can't be fixed from
+the repo" note at the end of this section.
+
+Everything else — Root Directory ambiguity, framework detection, build
+commands — has been made robust to the point of not mattering, per point 5
+below.
+
 ## What makes this monorepo deployable on Vercel
 
-A plain `next build` isn't enough for this repo — three things had to be
+A plain `next build` isn't enough for this repo — these things had to be
 in place, and stay in place if you touch these files:
 
 1. **Prisma Client must be (re)generated on every install.**
@@ -82,6 +99,29 @@ in place, and stay in place if you touch these files:
    same resolution at runtime via `new PrismaClient({ datasourceUrl })`,
    preferring the **pooled** connection there (better suited to
    serverless's many short-lived connections).
+5. **Deployment no longer depends on Vercel's Root Directory setting being
+   correct.** A root-level `vercel.json` explicitly sets `framework`,
+   `installCommand`, `buildCommand` (`pnpm --filter @frodocodo/web run
+   vercel-build`), and `outputDirectory` (`apps/web/.next`) — this works
+   correctly with Vercel's Root Directory left at the repo root (the
+   default/blank state). `apps/web/package.json` still has its own
+   `vercel-build` script too, so if Root Directory is instead set to
+   `apps/web`, Vercel's zero-config Next.js detection finds and uses that
+   directly and the root `vercel.json` is simply not read (Vercel only
+   looks for `vercel.json` at the configured Root Directory). Both paths
+   produce the same result — this was made redundant on purpose so a
+   half-completed dashboard change can't break the build either way.
+   **Root Directory is the one setting from earlier troubleshooting that
+   this change makes irrelevant — leave it as whatever it currently is.**
+
+### One thing that can't be fixed from the repo
+
+**Production Branch** (Vercel → Project → Settings → Git) must be
+`claude/household-financial-os-90nezc` for pushes to that branch to
+auto-deploy to the production URL. This is stored in Vercel's own project
+configuration, not in this repository, so no commit can change it — it must
+be set once in the dashboard (or via the Vercel API/CLI with a token, which
+this repo does not have and should not be given for this).
 
 ## Environment variables
 
