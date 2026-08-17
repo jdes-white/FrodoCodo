@@ -90,19 +90,31 @@ spec's non-negotiables — the short version is below.
   query-engine binary silently missing from the deployed function). Don't
   reintroduce a custom `output` in `packages/db/prisma/schema.prisma`
   without re-testing a real Vercel deploy. See `docs/deployment.md`.
-- **Even at the default output location, Next's output file tracer still
-  fails to find the query-engine binary on its own** in this pnpm
-  monorepo — confirmed by inspecting `.next/server/app/**/*.nft.json`
-  after a build, which showed zero Prisma files even with the correct
-  `binaryTargets` set. `apps/web/next.config.ts` compensates with both
-  `serverExternalPackages: ["@prisma/client"]` and an explicit
-  `outputFileTracingIncludes` glob force-including the generated
-  `.prisma/client` directory for every route (keyed on both `"/**/*"` and
-  `"/"` — the wildcard alone doesn't match the bare root route). If a
-  Vercel deploy ever throws "Prisma Client could not locate the Query
-  Engine" again, re-verify by grepping a real build's nft trace for
-  `libquery_engine` rather than assuming `binaryTargets` is enough — see
-  `docs/deployment.md` for the full diagnosis.
+- **pnpm's default nested `.pnpm` virtual store is not safe for Prisma's
+  query-engine binary on Vercel — root `.npmrc` sets `node-linker=hoisted`
+  specifically to avoid it.** With pnpm's default `isolated` linker, the
+  generated engine binary lands at
+  `node_modules/.pnpm/@prisma+client@<hash>/node_modules/.prisma/client/libquery_engine-*.so.node`
+  — several directories deep inside a hashed store. A first attempt to fix
+  this with `outputFileTracingIncludes` (a glob force-including that nested
+  path) looked correct locally — `.next/server/app/**/*.nft.json` listed
+  the binary after every route — but **production still failed** with
+  "Prisma Client could not locate the Query Engine" on `/login`, proving
+  that a local `.nft.json` check alone doesn't guarantee what Vercel
+  actually deploys. `node-linker=hoisted` sidesteps the whole problem by
+  making pnpm install a flat `node_modules` (no `.pnpm` store at all), so
+  `@prisma/client` and the generated `.prisma/client` directory land at the
+  plain, well-supported paths every Prisma+Vercel guide assumes — the same
+  layout npm/yarn users get by default. `apps/web/next.config.ts` still
+  sets `serverExternalPackages: ["@prisma/client"]` and an
+  `outputFileTracingIncludes` glob pointing at the new flat path
+  (`../../node_modules/.prisma/client/**/*`, keyed on both `"/**/*"` and
+  `"/"`) as defense-in-depth, but the flat layout is the actual fix. If a
+  Vercel deploy ever throws this error again: don't trust a local
+  `.nft.json` grep as sufficient proof — copy the exact file set an
+  `.nft.json` lists into an isolated directory (nothing else on the path)
+  and run a real Prisma query against only those files, the way this was
+  diagnosed. See `docs/deployment.md` for the full diagnosis.
 - `packages/db/package.json`'s `"postinstall": "node scripts/generate.mjs"`
   is what makes the Prisma Client exist after `pnpm install` on a machine
   that's never run `prisma generate` manually (every CI/deploy environment,
