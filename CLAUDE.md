@@ -119,6 +119,13 @@ spec's non-negotiables — the short version is below.
     else on the path) and run a real Prisma query against only those files,
     the way every round of this was actually diagnosed. See
     `docs/deployment.md` for the full history.
+  - **The `pg.Pool` in `packages/db/src/index.ts` must always have an
+    `error` listener attached.** node-postgres crashes the entire process
+    on an unhandled `error` event from an idle pooled client — and cloud
+    Postgres proxies (Neon's included) routinely close idle connections,
+    triggering exactly that. Local Postgres essentially never does this, so
+    losing this listener wouldn't show up in local testing at all, only in
+    production against Neon. Don't remove it.
 - `packages/db/package.json`'s `"postinstall": "node scripts/generate.mjs"`
   is what makes the Prisma Client exist after `pnpm install` on a machine
   that's never run `prisma generate` manually (every CI/deploy environment,

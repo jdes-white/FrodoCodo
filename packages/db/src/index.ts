@@ -56,7 +56,30 @@ function resolveDatabaseUrl(): string {
  * Lambda — see docs/deployment.md for the history of why that kept failing.
  */
 function createPrismaClient(): PrismaClient {
-  const pool = globalThis.__frodocodoPgPool ?? new Pool({ connectionString: resolveDatabaseUrl() });
+  const pool =
+    globalThis.__frodocodoPgPool ??
+    new Pool({
+      connectionString: resolveDatabaseUrl(),
+      // Neon's pooled endpoint already pools connections server-side via
+      // PgBouncer — this Pool just needs to avoid multiplying that further
+      // across concurrent serverless invocations, not provide its own large
+      // pool. Kept small and conservative rather than left at pg's default
+      // (10), which is sized for a single long-lived server process, not a
+      // Lambda instance.
+      max: 3,
+    });
+  // node-postgres requires an `error` listener on the Pool: if a pooled
+  // (idle) client hits a network-level error — which cloud Postgres
+  // proxies like Neon's routinely trigger by closing idle connections —
+  // and nothing is listening, Node's default EventEmitter behavior is to
+  // throw and crash the entire process. Local Postgres essentially never
+  // does this (no aggressive idle-connection reaping), so this was
+  // invisible in every local/isolated test run and only surfaced as an
+  // unexplained "server-side exception" against the real Neon connection
+  // in production — see docs/deployment.md.
+  pool.on("error", (err) => {
+    console.error("[pg pool] idle client error", err);
+  });
   const client = new PrismaClient({ adapter: new PrismaPg(pool) });
   if (process.env.NODE_ENV !== "production") {
     // Dev hot-reload re-evaluates this module on every edit — cache the pool
