@@ -24,13 +24,16 @@
     "@frodocodo/ledger": "workspace:*",
     "@frodocodo/providers": "workspace:*",
     "@frodocodo/shared": "workspace:*",
-    "@prisma/client": "^6.3.1",
-    "bcryptjs": "^2.4.3"
+    "@prisma/adapter-pg": "6.19.3",
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "^2.4.3",
+    "pg": "^8.23.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.5",
-    "prisma": "^6.3.1",
+    "@types/pg": "^8.21.0",
+    "prisma": "6.19.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

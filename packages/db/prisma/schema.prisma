@@ -1,12 +1,17 @@
 // FrodoCodo — Household Financial Operating System
 // Domain model per project spec §36. Money is always Decimal — never Float.
 
+// Driver-adapter mode (engineType = "client"): the generated client has no
+// native query-engine binary at all — no binaryTargets, no
+// libquery_engine-*.so.node, nothing platform-specific to package for
+// Vercel. Query execution goes through the `pg` driver we hand it (see
+// packages/db/src/index.ts) instead of a bundled Rust engine. This
+// replaces three earlier attempts to make Next.js's output-file tracer
+// correctly find a native binary inside pnpm's install layout — see
+// docs/deployment.md for why those were abandoned instead of iterated on.
 generator client {
-  provider      = "prisma-client-js"
-  // "native" covers local dev; rhel-openssl-3.0.x covers Vercel's serverless
-  // runtime — without it, deploys build fine but crash at runtime looking
-  // for a query-engine binary that was never generated for that platform.
-  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+  provider   = "prisma-client-js"
+  engineType = "client"
 }
 
 datasource db {

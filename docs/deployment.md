@@ -67,73 +67,116 @@ A plain `next build` isn't enough for this repo — these things had to be
 in place, and stay in place if you touch these files:
 
 1. **Prisma Client must be (re)generated on every install.**
-   `packages/db/package.json` has `"postinstall": "prisma generate"` — pnpm
-   runs this automatically for every workspace package during `pnpm
+   `packages/db/package.json` has `"postinstall": "node scripts/generate.mjs"`
+   — pnpm runs this automatically for every workspace package during `pnpm
    install`, which is what Vercel's build runs first. Without it, the build
    fails looking for a Prisma Client that was never generated (it's
-   git-ignored, not committed). The Prisma Client is generated to its
-   **default** location (`node_modules/@prisma/client`, imported as
-   `from "@prisma/client"` in `packages/db/src/index.ts`) rather than a
-   custom `output` path — a custom path outside `node_modules` is a known
-   source of Next.js build-tracing failures in serverless deployments
-   (the query-engine binary silently not getting included in the deployed
-   function), so this repo deliberately uses the well-trodden default.
-2. **The Prisma schema declares a serverless-compatible binary target.**
-   `generator client { binaryTargets = ["native", "rhel-openssl-3.0.x"] }`
-   in `packages/db/prisma/schema.prisma` — `native` covers local dev,
-   `rhel-openssl-3.0.x` covers Vercel's serverless runtime. Without this,
-   the build succeeds but the deployed app crashes at runtime on the first
-   database query.
-2b. **pnpm's nested `.pnpm` virtual store is not a safe place for Prisma's
-   query engine binary on Vercel — install with a flat `node_modules`
-   instead.** By default pnpm's `isolated` linker buries the generated
-   engine file (`libquery_engine-rhel-openssl-3.0.x.so.node`) deep inside a
-   hashed store path, e.g.
-   `node_modules/.pnpm/@prisma+client@<hash>/node_modules/.prisma/client/`.
+   git-ignored, not committed).
+2. **Prisma runs in driver-adapter mode: no native query-engine binary
+   exists anywhere in this deployment, by design — this replaced three
+   failed attempts at packaging one.** The history, in order:
 
-   The first fix attempted here was `outputFileTracingIncludes` — a glob
-   force-including that exact nested path for every route — and it looked
-   correct by every local check available: `.next/server/app/**/*.nft.json`
-   listed the engine binary after the build, and `serverExternalPackages:
-   ["@prisma/client"]` was also set per Prisma's documented guidance.
-   **Production still failed** on `/login` with "Prisma Client could not
-   locate the Query Engine" — proving that a local `.nft.json` grep is not
-   sufficient proof of what Vercel actually deploys; something about the
-   nested `.pnpm` path specifically doesn't survive Vercel's real packaging
-   even when Next's own trace output says it should.
+   - **Attempt 1**: `generator client { binaryTargets = ["native", "rhel-openssl-3.0.x"] }`
+     plus the plain client (`new PrismaClient({ datasourceUrl })`). Builds
+     succeeded; the deployed function crashed on its first query with
+     "Prisma Client could not locate the Query Engine" — the binary wasn't
+     making it into the Lambda.
+   - **Attempt 2**: `outputFileTracingIncludes` force-including the engine
+     binary's path inside pnpm's nested `.pnpm` virtual store
+     (`node_modules/.pnpm/@prisma+client@<hash>/node_modules/.prisma/client/`).
+     This looked correct by every local check available —
+     `.next/server/app/**/*.nft.json` listed the binary after the build —
+     and **production failed the same way anyway**, proving a local
+     `.nft.json` grep is not sufficient proof of what Vercel actually
+     deploys.
+   - **Attempt 3**: root-level `.npmrc` with `node-linker=hoisted`, flattening
+     `node_modules` so the binary sat at a plain, well-supported path
+     instead of nested inside `.pnpm`. This one was verified rigorously —
+     the exact file set an `.nft.json` listed was copied into an isolated
+     directory reproducing a real Vercel Lambda's `/var/task/...` layout,
+     and a real Prisma query succeeded from inside it with zero access to
+     the project's actual `node_modules` — and it worked. `/login` came
+     back up.
+   - Then a **new** failure surfaced on `/login` a build later:
+     `FUNCTION_INVOCATION_TIMEOUT` from the seed endpoint (unrelated —
+     fixed by batching `seedDemoHousehold`'s ~450 sequential DB round-trips
+     into a handful of bulk statements, see the git history), and after
+     that, the query-engine-not-found error itself came back on `/login`
+     specifically even though the isolated-directory test had proven the
+     flat-layout fix worked. At that point continuing to chase the native
+     binary's packaging stopped being the right call — three attempts,
+     each individually well-verified, each still capable of breaking again
+     — and the architecture changed instead.
 
-   The actual fix: **root-level `.npmrc` sets `node-linker=hoisted`**,
-   which makes `pnpm install` produce a flat `node_modules` (no `.pnpm`
-   store at all) — the same layout npm/yarn users get by default, and the
-   one every Prisma+Vercel guide assumes. With this, `@prisma/client` and
-   the generated `.prisma/client` directory land at the plain
-   `node_modules/@prisma/client` / `node_modules/.prisma/client` paths,
-   eliminating the nested-store problem entirely rather than trying to
-   force-include around it. `apps/web/next.config.ts` still sets both
-   `serverExternalPackages: ["@prisma/client"]` and an
-   `outputFileTracingIncludes` glob pointing at the new flat path
-   (`../../node_modules/.prisma/client/**/*`, keyed on both `"/**/*"` and
-   `"/"` — `"/**/*"` alone doesn't match the bare root route under
-   minimatch) as defense-in-depth, but the flat layout is what actually
-   makes this reliable.
+   **The actual fix: stop shipping a native query engine at all.**
+   `packages/db/prisma/schema.prisma`'s generator sets `engineType = "client"`
+   (Prisma's driver-adapter mode), and `packages/db/src/index.ts` constructs
+   `PrismaClient` with `adapter: new PrismaPg(pool)` — a real `pg.Pool`
+   (`@prisma/adapter-pg` + the `pg` package) — instead of a bare
+   `datasourceUrl`. Prisma Client no longer owns a database connection or a
+   compiled Rust engine for query execution at all; it generates SQL and
+   hands every query to `pg`, which is a battle-tested, pure-JS-resolvable
+   driver with no platform-specific binary of its own. `binaryTargets` is
+   gone from the schema entirely — there's no per-platform variant to get
+   wrong, because there's no native binary to select one for.
 
-   **How this was actually verified** (since local `.nft.json` inspection
-   alone was proven insufficient last time): after rebuilding with the flat
-   layout, the exact file set listed in `/login`'s `page.js.nft.json` was
-   copied — nothing else — into an isolated directory reproducing the real
-   `/var/task/...` layout a Vercel Lambda gets, and a real
-   `new PrismaClient(...)` query (`$queryRaw` and `prisma.user.findUnique`,
-   the same call `/login`'s server action makes) was run from inside that
-   isolated tree with no access to the project's actual `node_modules`. It
-   succeeded. Then the full login flow was driven end-to-end with a real
-   headless browser against `next start` (the production build), watching
-   for any non-2xx/3xx HTTP response — none occurred, and the browser
-   landed on the authenticated dashboard with live seeded data.
+   This is not a workaround layered on top of the native-engine
+   architecture; it removes the entire class of problem that produced three
+   separate production failures.
 
-   If you ever change how/where the Prisma Client is generated or touch
-   `.npmrc`, re-verify with the isolated-directory method above — don't
-   trust `.nft.json` inspection alone, it already produced a false
-   positive once.
+   **One binary asset remains**, and it's a materially different animal:
+   `node_modules/.prisma/client/query_compiler_bg.wasm`, a small (~2MB),
+   platform-agnostic WebAssembly query *compiler* (SQL generation only — no
+   connection, no execution, and the *same file* regardless of OS/libc, so
+   there's no `binaryTargets`-style "wrong platform" failure mode possible).
+   It's loaded via `fs.readFileSync` at runtime by the plain `@prisma/client`
+   import.
+
+   A cleaner-sounding alternative was tried and rejected: importing
+   `@prisma/client/wasm` instead, which loads the same file via a real
+   `import()` rather than a runtime file read — in principle lets webpack
+   bundle it as a normal asset instead of needing any tracing help at all.
+   It built successfully and traced automatically with zero custom config,
+   but **every query failed at runtime** with "the loaded wasm module was
+   unexpectedly undefined or null": that entry point is built for
+   edge/worker runtimes with native ESM-WebAssembly import support, and the
+   module shape it expects doesn't match what webpack's `asyncWebAssembly`
+   experiment produces when bundling a Node.js server route. Diagnosed by
+   reading the generated loader code directly
+   (`node_modules/.prisma/client/wasm.js` and its
+   `wasm-worker-loader.mjs`/`wasm-edge-light-loader.mjs` siblings), not by
+   guessing. Reverted to the plain `@prisma/client` import, which is what
+   Prisma actually tests against Node.js server runtimes.
+
+   Given that, `apps/web/next.config.ts` keeps `serverExternalPackages:
+   ["@prisma/client"]` (so webpack leaves that runtime file read alone
+   rather than mangling it while bundling) and a narrow
+   `outputFileTracingIncludes` pointing at just
+   `query_compiler_bg.*` (keyed on both `"/**/*"` and `"/"` — the wildcard
+   alone doesn't match the bare root route under minimatch) — one ~2MB file,
+   not the ~35MB of dual-platform native binaries the old `binaryTargets`
+   setup shipped. Root `.npmrc` (`node-linker=hoisted`) still keeps
+   `node_modules` flat, which remains good practice independent of Prisma.
+
+   **How this was verified**: after building, `.next/server/app/**/*.nft.json`
+   was confirmed to list `query_compiler_bg.wasm` for every route that
+   touches Prisma (all 9 of them) and zero `.so.node` files anywhere in
+   `node_modules`. `@prisma/adapter-pg`'s actual implementation (verified by
+   grepping for its distinctive method names — `startTransaction`,
+   `executeScript`, `underlyingDriver`) is bundled directly into the
+   `transpilePackages`-compiled chunks, not left as a separate traced
+   dependency at all. Then the full pipeline was run for real: `prisma
+   migrate deploy` against a live Postgres, `next build`, `next start`, a
+   real `POST /api/admin/seed` (the same 157-transaction seed that
+   previously timed out), and a real headless-browser login as
+   `admin@frodocodo.household` — landing on the authenticated dashboard
+   with zero non-2xx/3xx HTTP responses anywhere in the flow.
+
+   If a Prisma runtime error ever surfaces again: don't trust a local
+   `.nft.json` grep as sufficient proof by itself. Copy the exact file set
+   an `.nft.json` lists into an isolated directory (nothing else on the
+   path) and run a real Prisma query against only those files — the way
+   every one of these was actually diagnosed, not guessed at.
 3. **Migrations run automatically on every deploy, seeding does not.**
    `apps/web/package.json`'s `vercel-build` script (Vercel uses this
    instead of `build` automatically, if present) runs
@@ -160,9 +203,11 @@ in place, and stay in place if you touch these files:
    `migrate deploy` specifically (Prisma's migration engine needs one —
    advisory locks don't work reliably through pgbouncer's transaction
    pooling mode). The running app (`packages/db/src/index.ts`) does the
-   same resolution at runtime via `new PrismaClient({ datasourceUrl })`,
-   preferring the **pooled** connection there (better suited to
-   serverless's many short-lived connections).
+   same resolution at runtime and passes it to the `pg.Pool` that backs
+   Prisma's driver adapter (`new Pool({ connectionString })`), preferring
+   the **pooled** connection there (better suited to serverless's many
+   short-lived connections; node-postgres's unnamed prepared statements are
+   safe through pgbouncer's transaction pooling mode).
 5. **No root-level `vercel.json` — `apps/web/package.json`'s own
    `vercel-build` script is the single build entry point.** With Root
    Directory=`apps/web`, Vercel's zero-config Next.js detection finds
