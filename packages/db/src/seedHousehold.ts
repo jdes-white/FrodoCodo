@@ -16,6 +16,7 @@ import bcryptjs from "bcryptjs";
 import { MockProvider, MOCK_INSTITUTIONS } from "@frodocodo/providers";
 import { normalizeMerchant, detectTransferPairs, detectRefunds } from "@frodocodo/ledger";
 import { todayUTC } from "@frodocodo/shared";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "./index.js";
 
 const DEMO_ADMIN_EMAIL = "admin@frodocodo.household";
@@ -178,16 +179,19 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
   log("Connecting mock institutions and syncing transactions...");
   const provider = new MockProvider();
 
-  interface StagedTransaction {
-    id: string;
+  // Neon's remote round-trip latency (unlike local Postgres) makes one
+  // DB call per transaction/merchant far too slow for Vercel's function
+  // timeout — this stage batches everything into a handful of bulk
+  // statements instead of ~450+ sequential creates/upserts (originally
+  // timed out in production at maxDuration=60 on Hobby). Provider calls
+  // stay per-institution (cheap, in-memory, no I/O); only the DB writes
+  // are batched.
+  interface RawSyncedTransaction {
     accountId: string;
     accountType: string;
-    accountProviderId: string;
-    merchantMatchKey: string | null;
-    categoryId: string | null;
-    data: Parameters<typeof prisma.transaction.create>[0]["data"];
+    tx: Awaited<ReturnType<typeof provider.syncTransactions>>["transactions"][number];
   }
-  const staged: StagedTransaction[] = [];
+  const rawTransactions: RawSyncedTransaction[] = [];
 
   for (const inst of MOCK_INSTITUTIONS) {
     const institution = institutionByProviderId.get(inst.providerInstitutionId)!;
@@ -209,79 +213,106 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
     });
 
     const providerAccounts = await provider.discoverAccounts(providerConnectionId);
-    const accountByProviderId = new Map<string, { id: string; accountType: string }>();
-    for (const pa of providerAccounts) {
-      const account = await prisma.account.create({
-        data: {
-          connectionId: connection.id,
-          providerAccountId: pa.providerAccountId,
-          displayName: pa.displayName,
-          accountType: pa.accountType,
-          currency: pa.currency,
-          currentBalance: pa.currentBalance.toNumber(),
-          availableBalance: pa.availableBalance.toNumber(),
-          lastSyncedAt: new Date(),
-        },
-      });
-      accountByProviderId.set(pa.providerAccountId, account);
-    }
+    // Generate ids up front so createMany's rows and this in-memory map
+    // reference the exact same account — createMany doesn't return rows,
+    // so there's nothing to read back from the DB afterward.
+    const accountByProviderId = new Map<string, { id: string; accountType: string }>(
+      providerAccounts.map((pa) => [pa.providerAccountId, { id: randomUUID(), accountType: pa.accountType }]),
+    );
+    await prisma.account.createMany({
+      data: providerAccounts.map((pa) => ({
+        id: accountByProviderId.get(pa.providerAccountId)!.id,
+        connectionId: connection.id,
+        providerAccountId: pa.providerAccountId,
+        displayName: pa.displayName,
+        accountType: pa.accountType,
+        currency: pa.currency,
+        currentBalance: pa.currentBalance.toNumber(),
+        availableBalance: pa.availableBalance.toNumber(),
+        lastSyncedAt: new Date(),
+      })),
+    });
 
     const sync = await provider.syncTransactions(providerConnectionId, {});
     for (const tx of sync.transactions) {
       const account = accountByProviderId.get(tx.accountProviderId)!;
-      const merchant = normalizeMerchant(tx.description);
-      const isIncome = /SALARY/i.test(tx.description);
-      const isTransferLabel = /^PAYMENT (TO|RECEIVED)/i.test(tx.description);
-      const categoryKey = isIncome || isTransferLabel ? null : categorizeByDescription(tx.description);
-      const category = categoryKey ? categoryByKey.get(categoryKey)! : null;
-
-      const merchantRow = await prisma.merchant.upsert({
-        where: { householdId_matchKey: { householdId: household.id, matchKey: merchant.matchKey } },
-        update: {},
-        create: { householdId: household.id, normalizedName: merchant.normalizedName, matchKey: merchant.matchKey },
-      });
-
-      const id = randomUUID();
-      staged.push({
-        id,
-        accountId: account.id,
-        accountType: account.accountType,
-        accountProviderId: tx.accountProviderId,
-        merchantMatchKey: merchant.matchKey,
-        categoryId: category?.id ?? null,
-        data: {
-          id,
-          accountId: account.id,
-          providerTransactionId: tx.providerTransactionId,
-          transactionDate: new Date(tx.transactionDate),
-          postingDate: tx.postingDate ? new Date(tx.postingDate) : null,
-          amount: tx.amount.toNumber(),
-          direction: tx.direction,
-          status: tx.status,
-          originalDescription: tx.description,
-          normalizedMerchantId: merchantRow.id,
-          merchantConfidence: merchant.confidence,
-          categoryId: category?.id ?? null,
-          classificationConfidence: category ? 1 : undefined,
-          classificationSource: category ? "RULE" : undefined,
-          isExcludedFromBudget: isIncome || isTransferLabel,
-          isTransfer: isTransferLabel,
-          rawProviderPayload: tx.raw as never,
-        },
-      });
+      rawTransactions.push({ accountId: account.id, accountType: account.accountType, tx });
     }
   }
+
+  log(`Preparing merchants and classifications for ${rawTransactions.length} transactions...`);
+  const merchantByMatchKey = new Map<string, { normalizedName: string; matchKey: string; confidence: number }>();
+  for (const { tx } of rawTransactions) {
+    const merchant = normalizeMerchant(tx.description);
+    if (!merchantByMatchKey.has(merchant.matchKey)) merchantByMatchKey.set(merchant.matchKey, merchant);
+  }
+
+  await prisma.merchant.createMany({
+    data: [...merchantByMatchKey.values()].map((m) => ({
+      householdId: household.id,
+      normalizedName: m.normalizedName,
+      matchKey: m.matchKey,
+    })),
+    skipDuplicates: true,
+  });
+  const merchantRows = await prisma.merchant.findMany({
+    where: { householdId: household.id, matchKey: { in: [...merchantByMatchKey.keys()] } },
+    select: { id: true, matchKey: true },
+  });
+  const merchantIdByMatchKey = new Map(merchantRows.map((m) => [m.matchKey, m.id]));
+
+  interface StagedTransaction {
+    id: string;
+    accountId: string;
+    accountType: string;
+    merchantMatchKey: string | null;
+    categoryId: string | null;
+    data: Prisma.TransactionCreateManyInput;
+  }
+  const staged: StagedTransaction[] = rawTransactions.map(({ accountId, accountType, tx }) => {
+    const merchant = normalizeMerchant(tx.description);
+    const isIncome = /SALARY/i.test(tx.description);
+    const isTransferLabel = /^PAYMENT (TO|RECEIVED)/i.test(tx.description);
+    const categoryKey = isIncome || isTransferLabel ? null : categorizeByDescription(tx.description);
+    const category = categoryKey ? categoryByKey.get(categoryKey)! : null;
+    const id = randomUUID();
+
+    return {
+      id,
+      accountId,
+      accountType,
+      merchantMatchKey: merchant.matchKey,
+      categoryId: category?.id ?? null,
+      data: {
+        id,
+        accountId,
+        providerTransactionId: tx.providerTransactionId,
+        transactionDate: new Date(tx.transactionDate),
+        postingDate: tx.postingDate ? new Date(tx.postingDate) : null,
+        amount: tx.amount.toNumber(),
+        direction: tx.direction,
+        status: tx.status,
+        originalDescription: tx.description,
+        normalizedMerchantId: merchantIdByMatchKey.get(merchant.matchKey) ?? null,
+        merchantConfidence: merchant.confidence,
+        categoryId: category?.id ?? null,
+        classificationConfidence: category ? 1 : undefined,
+        classificationSource: category ? "RULE" : undefined,
+        isExcludedFromBudget: isIncome || isTransferLabel,
+        isTransfer: isTransferLabel,
+        rawProviderPayload: tx.raw as never,
+      },
+    };
+  });
 
   log(`Inserting ${staged.length} transactions...`);
-  for (const tx of staged) {
-    await prisma.transaction.create({ data: tx.data });
-  }
-  for (const tx of staged) {
-    if (tx.categoryId) {
-      await prisma.transactionClassification.create({
-        data: { transactionId: tx.id, categoryId: tx.categoryId, source: "RULE", confidence: 1 },
-      });
-    }
+  await prisma.transaction.createMany({ data: staged.map((t) => t.data) });
+
+  const classified = staged.filter((t) => t.categoryId);
+  if (classified.length > 0) {
+    await prisma.transactionClassification.createMany({
+      data: classified.map((t) => ({ transactionId: t.id, categoryId: t.categoryId!, source: "RULE" as const, confidence: 1 })),
+    });
   }
 
   log("Reconciling transfers and refunds via @frodocodo/ledger...");
@@ -297,16 +328,6 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
         transactionDate: (t.data as { transactionDate: Date }).transactionDate.toISOString().slice(0, 10),
       })),
   );
-  for (const match of transferMatches) {
-    await prisma.transaction.update({
-      where: { id: match.debitTransactionId },
-      data: { transferGroupId: match.debitTransactionId, counterpartTransactionId: match.creditTransactionId },
-    });
-    await prisma.transaction.update({
-      where: { id: match.creditTransactionId },
-      data: { transferGroupId: match.debitTransactionId },
-    });
-  }
 
   const refundCandidates = staged
     .filter((t) => t.merchantMatchKey)
@@ -319,13 +340,31 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
       transactionDate: (t.data as { transactionDate: Date }).transactionDate.toISOString().slice(0, 10),
     }));
   const refundMatches = detectRefunds(refundCandidates);
-  for (const match of refundMatches) {
-    const original = staged.find((t) => t.id === match.originalTransactionId)!;
-    await prisma.transaction.update({
-      where: { id: match.refundTransactionId },
-      data: { refundOfTransactionId: match.originalTransactionId, categoryId: original.categoryId },
-    });
-  }
+
+  // Each row needs different data, so these can't collapse into a single
+  // createMany/updateMany — but batching them as one Prisma transaction
+  // pipelines every statement over the same connection in one round trip
+  // to the database instead of one per update.
+  const updates = [
+    ...transferMatches.flatMap((match) => [
+      prisma.transaction.update({
+        where: { id: match.debitTransactionId },
+        data: { transferGroupId: match.debitTransactionId, counterpartTransactionId: match.creditTransactionId },
+      }),
+      prisma.transaction.update({
+        where: { id: match.creditTransactionId },
+        data: { transferGroupId: match.debitTransactionId },
+      }),
+    ]),
+    ...refundMatches.map((match) => {
+      const original = staged.find((t) => t.id === match.originalTransactionId)!;
+      return prisma.transaction.update({
+        where: { id: match.refundTransactionId },
+        data: { refundOfTransactionId: match.originalTransactionId, categoryId: original.categoryId },
+      });
+    }),
+  ];
+  if (updates.length > 0) await prisma.$transaction(updates);
 
   log("Done.");
 

@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { seedDemoHousehold } from "@frodocodo/db";
 
-// Seeding does ~150+ sequential DB round-trips — longer than the platform's
-// default function timeout. Vercel caps this to whatever the plan allows
-// (e.g. Hobby's ceiling) if 60 is higher than permitted, so it's safe to
-// declare even without knowing the exact plan limit.
+// Hobby's ceiling for maxDuration is 60s — already the max this plan allows,
+// so a timeout can't be fixed by raising this further (see
+// seedDemoHousehold in packages/db/src/seedHousehold.ts, which batches its
+// writes specifically to fit inside this ceiling against Neon's real
+// network latency instead of relying on a bigger number here).
 export const maxDuration = 60;
 
 /**
