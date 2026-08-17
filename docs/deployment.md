@@ -84,6 +84,34 @@ in place, and stay in place if you touch these files:
    `rhel-openssl-3.0.x` covers Vercel's serverless runtime. Without this,
    the build succeeds but the deployed app crashes at runtime on the first
    database query.
+2b. **Next.js's output file tracer needs explicit help finding the query
+   engine binary.** Declaring the binary target isn't sufficient on its own
+   in this pnpm monorepo: the generated engine file
+   (`libquery_engine-rhel-openssl-3.0.x.so.node`) lands deep inside pnpm's
+   hashed `.pnpm` virtual store (e.g.
+   `node_modules/.pnpm/@prisma+client@<version>/node_modules/.prisma/client/`),
+   and `@vercel/nft` (the tracer Vercel uses to decide which files ship with
+   each serverless function) fails to detect it there — confirmed locally
+   by inspecting the emitted `.next/server/app/**/*.nft.json` trace files,
+   which listed zero Prisma files at all despite a successful build. This
+   reproduced the production symptom exactly: `prisma migrate deploy` (a
+   separate, unaffected CLI step) succeeds, but the deployed function
+   crashes on its first query with "Prisma Client could not locate the
+   Query Engine". `apps/web/next.config.ts` now sets **both**:
+   - `serverExternalPackages: ["@prisma/client"]` — the documented starting
+     point, but verified locally to be insufficient by itself.
+   - `outputFileTracingIncludes` with a glob (`@prisma+client@*` tolerates
+     the version-hash segment changing between installs) force-including
+     the entire generated `.prisma/client` directory for every route,
+     keyed on **both** `"/**/*"` and `"/"` explicitly — `"/**/*"` alone
+     does not match the bare root route under minimatch (also confirmed
+     locally: the dashboard's trace had zero Prisma files with only the
+     wildcard present).
+
+   If you ever change how/where the Prisma Client is generated, re-verify
+   this by running a real build and grepping the relevant route's
+   `.next/server/app/**/route.js.nft.json` (or `page.js.nft.json`) for
+   `libquery_engine` — don't assume `binaryTargets` alone is enough.
 3. **Migrations run automatically on every deploy, seeding does not.**
    `apps/web/package.json`'s `vercel-build` script (Vercel uses this
    instead of `build` automatically, if present) runs

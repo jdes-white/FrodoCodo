@@ -90,6 +90,19 @@ spec's non-negotiables — the short version is below.
   query-engine binary silently missing from the deployed function). Don't
   reintroduce a custom `output` in `packages/db/prisma/schema.prisma`
   without re-testing a real Vercel deploy. See `docs/deployment.md`.
+- **Even at the default output location, Next's output file tracer still
+  fails to find the query-engine binary on its own** in this pnpm
+  monorepo — confirmed by inspecting `.next/server/app/**/*.nft.json`
+  after a build, which showed zero Prisma files even with the correct
+  `binaryTargets` set. `apps/web/next.config.ts` compensates with both
+  `serverExternalPackages: ["@prisma/client"]` and an explicit
+  `outputFileTracingIncludes` glob force-including the generated
+  `.prisma/client` directory for every route (keyed on both `"/**/*"` and
+  `"/"` — the wildcard alone doesn't match the bare root route). If a
+  Vercel deploy ever throws "Prisma Client could not locate the Query
+  Engine" again, re-verify by grepping a real build's nft trace for
+  `libquery_engine` rather than assuming `binaryTargets` is enough — see
+  `docs/deployment.md` for the full diagnosis.
 - `packages/db/package.json`'s `"postinstall": "node scripts/generate.mjs"`
   is what makes the Prisma Client exist after `pnpm install` on a machine
   that's never run `prisma generate` manually (every CI/deploy environment,
