@@ -4,24 +4,23 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // Prisma runs in driver-adapter mode (packages/db/prisma/schema.prisma:
   // `engineType = "client"`) — no native OS-specific query-engine binary
-  // exists anywhere in this project anymore. The one remaining binary asset
-  // is a small (~2MB), platform-agnostic WASM query compiler
-  // (node_modules/.prisma/client/query_compiler_bg.wasm), loaded via a
-  // plain `fs.readFileSync` at runtime rather than a static import (an
-  // edge/worker-runtime build of the client uses a real `import()` instead,
-  // which sounded more bundler-friendly, but its expected module shape
-  // doesn't match what webpack's WASM handling produces for a bundled
-  // Node.js server route — every query failed at runtime even though the
-  // build succeeded, so that path was abandoned; see docs/deployment.md).
-  // Declaring @prisma/client external avoids webpack touching that runtime
-  // file read at all, and the include below guarantees the one file it
-  // needs actually ships with the deployed function regardless of whether
-  // Next's automatic tracing would have caught it on its own.
+  // exists anywhere in this project. Declaring @prisma/client external
+  // leaves its runtime file read (see packages/db/src/wasmCompilerPatch.ts)
+  // to plain Node `require()` resolution instead of webpack bundling it.
+  //
+  // Deliberately NOT paired with an outputFileTracingIncludes entry for
+  // the WASM query compiler, even though that file still technically
+  // exists on disk after `prisma generate`. Three separate attempts to get
+  // Vercel's output-file tracer to reliably ship a Prisma-generated
+  // runtime file — this WASM compiler once, a native query-engine binary
+  // twice before it — each looked correct against a local build's own
+  // `.next/server/**/*.nft.json` trace and each still failed in production
+  // with the file missing. packages/db/src/wasmCompilerPatch.ts now
+  // patches the one fs.readFileSync call that would otherwise look for
+  // that file, so nothing in the deployed function depends on Vercel
+  // finding it — see docs/deployment.md for the full history and how
+  // that's verified.
   serverExternalPackages: ["@prisma/client"],
-  outputFileTracingIncludes: {
-    "/": ["../../node_modules/.prisma/client/query_compiler_bg.*"],
-    "/**/*": ["../../node_modules/.prisma/client/query_compiler_bg.*"],
-  },
   transpilePackages: [
     "@frodocodo/shared",
     "@frodocodo/domain",

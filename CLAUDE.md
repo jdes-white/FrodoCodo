@@ -98,21 +98,29 @@ spec's non-negotiables — the short version is below.
   production anyway). Don't reintroduce `binaryTargets` or switch back to
   the plain `env("DATABASE_URL")` + bare `new PrismaClient()` pattern
   without re-reading `docs/deployment.md`'s full history first.
-  - There is still exactly **one** binary asset: a small (~2MB),
-    platform-agnostic WASM query *compiler* (SQL generation, not
-    connection/execution) at `node_modules/.prisma/client/query_compiler_bg.wasm`
-    — loaded via `fs.readFileSync` at runtime by the plain `@prisma/client`
-    import (deliberately not `@prisma/client/wasm`, which targets edge/worker
-    runtimes and produces a *different* runtime error, "the loaded wasm
-    module was unexpectedly undefined", when bundled through webpack for a
-    Node.js server route — the module shape it expects doesn't match what
-    webpack's `asyncWebAssembly` experiment produces). `apps/web/next.config.ts`
-    marks `@prisma/client` external via `serverExternalPackages` and
-    force-includes that one file via `outputFileTracingIncludes` (keyed on
-    both `"/**/*"` and `"/"` — the wildcard alone doesn't match the bare
-    root route under minimatch). Root `.npmrc` (`node-linker=hoisted`) keeps
-    `node_modules` flat so that file sits at a plain, well-supported path
-    rather than nested inside pnpm's `.pnpm` virtual store.
+  - There is still exactly **one** binary asset the generated client
+    produces: a small (~2MB), platform-agnostic WASM query *compiler* (SQL
+    generation, not connection/execution) at
+    `node_modules/.prisma/client/query_compiler_bg.wasm` — but **nothing in
+    the deployed app depends on that file existing on disk**. A fourth
+    attempt at getting Vercel's output-file tracer to ship it (narrowing
+    `outputFileTracingIncludes` to just that file, after `binaryTargets`
+    once and a `.pnpm`-path glob twice for the native engine before it)
+    produced the exact same failure pattern as the first three: correct by
+    every local `.nft.json` check, `ENOENT` in the actual deployed
+    function. Continuing to vary the tracing approach stopped being a
+    reasonable bet at that point. Instead, `packages/db/scripts/generate.mjs`
+    base64-embeds the WASM file's bytes into a generated (git-ignored)
+    `packages/db/src/generated/queryCompilerWasm.ts` on every
+    `prisma generate`, and `packages/db/src/wasmCompilerPatch.ts` — imported
+    for its side effect before `@prisma/client`, in `packages/db/src/index.ts`
+    — patches the one `fs.readFileSync` call the generated client uses to
+    load that file, returning the embedded bytes instead. The bytes end up
+    physically compiled into the JS bundle (confirmed by grepping a built
+    chunk for the literal base64 content), not a separate file for anything
+    to trace or lose. Verified by running a real query from an isolated
+    directory with the real `.wasm` file deleted entirely — not just
+    untraced, physically absent — see `docs/deployment.md`.
   - If a Vercel deploy ever throws a Prisma runtime error again: don't
     trust a local `.nft.json` grep as sufficient proof by itself — copy the
     exact file set an `.nft.json` lists into an isolated directory (nothing
@@ -131,7 +139,13 @@ spec's non-negotiables — the short version is below.
   that's never run `prisma generate` manually (every CI/deploy environment,
   including Vercel). Don't remove it, and don't collapse it back to a bare
   `prisma generate` — the wrapper resolves the DB connection string across
-  several possible env var names first (see next point).
+  several possible env var names first (see next point), and it also
+  base64-embeds the WASM query compiler into
+  `packages/db/src/generated/queryCompilerWasm.ts` (git-ignored, like the
+  rest of the generated Prisma client) — see the driver-adapter bullet
+  above. If that embedding step is ever removed without also reverting
+  `packages/db/src/wasmCompilerPatch.ts`, the build will fail at compile
+  time (missing import) rather than silently, which is intentional.
 - **Never assume the database connection string is named `DATABASE_URL`.**
   Depending on how a Postgres integration provisions the database, it can
   land under `POSTGRES_PRISMA_URL`, `POSTGRES_URL`, `DATABASE_URL_UNPOOLED`,

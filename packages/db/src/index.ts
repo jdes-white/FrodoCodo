@@ -1,5 +1,14 @@
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
+// Must run before "@prisma/client" is imported — it patches the fs.readFileSync
+// call the client uses to load its WASM query compiler, so that call
+// returns bytes embedded directly in the JS bundle instead of depending on
+// Vercel having correctly included the real file. See
+// packages/db/src/wasmCompilerPatch.ts for the full history of why this
+// exists (three prior attempts to get Vercel's output-file tracer to
+// include that file all failed in production despite passing every local
+// check) and docs/deployment.md for how it's verified.
+import "./wasmCompilerPatch.js";
 // Deliberately the plain "@prisma/client" import, NOT "@prisma/client/wasm".
 // The /wasm entry point is built for edge/worker runtimes with native
 // ESM-WebAssembly import support and was tried first here — it loads its
@@ -11,11 +20,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
 // so every query failed at runtime with "The loaded wasm module was
 // unexpectedly undefined or null" even though the build succeeded. The
 // plain client's Node-condition loader does the same job via a regular
-// fs.readFileSync of query_compiler_bg.wasm and is what Prisma actually
-// tests against Node.js server runtimes — see docs/deployment.md for how
-// this was diagnosed and why the file still needs an explicit
-// outputFileTracingIncludes (next.config.ts) rather than relying on
-// automatic bundling for that read.
+// fs.readFileSync of query_compiler_bg.wasm — intercepted by the patch
+// above rather than left to Vercel's tracer.
 import { PrismaClient } from "@prisma/client";
 import { logDbEvent, logDbError } from "./dbErrors.js";
 

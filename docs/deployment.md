@@ -148,29 +148,62 @@ in place, and stay in place if you touch these files:
    guessing. Reverted to the plain `@prisma/client` import, which is what
    Prisma actually tests against Node.js server runtimes.
 
-   Given that, `apps/web/next.config.ts` keeps `serverExternalPackages:
-   ["@prisma/client"]` (so webpack leaves that runtime file read alone
-   rather than mangling it while bundling) and a narrow
-   `outputFileTracingIncludes` pointing at just
-   `query_compiler_bg.*` (keyed on both `"/**/*"` and `"/"` — the wildcard
-   alone doesn't match the bare root route under minimatch) — one ~2MB file,
-   not the ~35MB of dual-platform native binaries the old `binaryTargets`
-   setup shipped. Root `.npmrc` (`node-linker=hoisted`) still keeps
-   `node_modules` flat, which remains good practice independent of Prisma.
+   The first fix attempted for this file was the same class of fix as the
+   native engine before it: `apps/web/next.config.ts` kept
+   `serverExternalPackages: ["@prisma/client"]` and added an
+   `outputFileTracingIncludes` narrowed to just `query_compiler_bg.*`. It
+   showed up correctly in `.next/server/app/**/*.nft.json` for every route
+   that touches Prisma (all 9 of them) — and **production still failed**,
+   `ENOENT` on the exact same file, confirmed via the `/api/health/db`
+   endpoint's sanitized error response. That's four attempts now at getting
+   Vercel's output-file tracer to ship a Prisma-generated runtime file
+   (`binaryTargets` once, a `.pnpm`-path glob for the native engine twice,
+   this glob for the WASM compiler once) where a local build's own trace
+   said it would work and production disagreed anyway. At that point,
+   trying a fifth variation on "get the tracer to include this file"
+   stopped being a reasonable bet.
 
-   **How this was verified**: after building, `.next/server/app/**/*.nft.json`
-   was confirmed to list `query_compiler_bg.wasm` for every route that
-   touches Prisma (all 9 of them) and zero `.so.node` files anywhere in
-   `node_modules`. `@prisma/adapter-pg`'s actual implementation (verified by
-   grepping for its distinctive method names — `startTransaction`,
-   `executeScript`, `underlyingDriver`) is bundled directly into the
-   `transpilePackages`-compiled chunks, not left as a separate traced
-   dependency at all. Then the full pipeline was run for real: `prisma
-   migrate deploy` against a live Postgres, `next build`, `next start`, a
-   real `POST /api/admin/seed` (the same 157-transaction seed that
-   previously timed out), and a real headless-browser login as
-   `admin@frodocodo.household` — landing on the authenticated dashboard
-   with zero non-2xx/3xx HTTP responses anywhere in the flow.
+   **The actual fix removes the file-system dependency instead of trying
+   to satisfy it.** `packages/db/scripts/generate.mjs` now runs one more
+   step after `prisma generate`: it reads the freshly-generated
+   `query_compiler_bg.wasm`, base64-encodes it, and writes it into a
+   generated (git-ignored, like the rest of the Prisma client output)
+   `packages/db/src/generated/queryCompilerWasm.ts` as a plain string
+   constant. `packages/db/src/wasmCompilerPatch.ts` — imported for its side
+   effect at the very top of `packages/db/src/index.ts`, before
+   `@prisma/client` — patches the one `fs.readFileSync` call the generated
+   client uses to load that file (`node_modules/.prisma/client/index.js`,
+   inside `config.compilerWasm.getQueryCompilerWasmModule`): when the
+   requested filename matches, it returns the embedded bytes instead of
+   touching disk at all. `apps/web/next.config.ts` no longer has any
+   `outputFileTracingIncludes` entry for this file — there's nothing to
+   include, since nothing at runtime asks the real filesystem for it.
+   `serverExternalPackages: ["@prisma/client"]` stays, so webpack still
+   leaves the (now-patched) file read alone rather than bundling it.
+
+   **How this was verified** — deliberately stronger than the tracing-glob
+   attempts, since a passing `.nft.json` check had already produced two
+   false negatives by this point:
+   - Grepped a real built chunk (`.next/server/chunks/*.js`) for the
+     literal base64 content of the WASM file and found it physically
+     present, byte-for-byte, confirming the bytes are compiled into the JS
+     bundle itself rather than living in a separate file.
+   - Copied the exact file set `/login`'s `.nft.json` listed into an
+     isolated directory reproducing a real Vercel Lambda's `/var/task/...`
+     layout — with the real `.wasm` file **deleted entirely**, not merely
+     absent from the copy list — and ran the same `$queryRaw` and
+     `prisma.user.findUnique` calls `/login` makes from inside it. Logged
+     confirmation that `fs.existsSync` on the real path returned `false`
+     and that the patch intercepted the read; the query still succeeded.
+     This is the strongest form of this proof used anywhere in this
+     history: not "the trace says the file is there," but "the file
+     provably isn't there and it still works."
+   - Ran the full pipeline for real: `prisma migrate deploy` against a live
+     Postgres, `next build`, `next start`, `GET /api/health/db` (`{"ok":true}`),
+     a real `POST /api/admin/seed`, and a real headless-browser login as
+     `admin@frodocodo.household` followed by visiting `/transactions`,
+     `/plan`, `/insights`, and `/settings` — zero non-2xx/3xx HTTP responses
+     anywhere, with real seeded data rendering on each page (screenshotted).
 
    If a Prisma runtime error ever surfaces again: don't trust a local
    `.nft.json` grep as sufficient proof by itself. Copy the exact file set
