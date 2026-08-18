@@ -25,9 +25,13 @@ spec alone:
    `docs/provider-integration.md` and `docs/ai-architecture.md`.
 
 3. **Deploy live hosting this session, or leave it as a runnable
-   codebase?** → **Codebase only.** Nothing is deployed; see
-   `docs/deployment.md` for the recommended path (Vercel + Fly.io/Railway +
-   Neon) when the owner is ready to provision accounts themselves.
+   codebase?** → **Codebase only, at the time this decision was logged.**
+   Since then the repo has been prepared for deployment as a Docker image on
+   Render, backed by Neon Postgres — see `docs/deployment.md` for the current
+   architecture and the owner's one remaining setup step. (An earlier Vercel
+   deployment was tried and deliberately abandoned; do not reintroduce it —
+   see `docs/deployment.md`'s "Vercel was tried and deliberately abandoned"
+   section.)
 
 ## Engineering decisions made without asking (routine, per the spec's own instruction not to escalate these)
 

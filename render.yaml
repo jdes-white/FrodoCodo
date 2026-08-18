@@ -1,0 +1,58 @@
+# Render Blueprint for FrodoCodo's web app (apps/web). Import this repo on
+# Render and it reads this file automatically to configure the service —
+# no manual build/start command entry needed, since the Dockerfile defines
+# both.
+#
+# Deliberately minimal: only the web service for the current beta. The
+# background worker (apps/worker) is not deployed — the web app doesn't
+# depend on it (dashboard reads directly from Postgres) — and no
+# additional infrastructure (Redis, queues, a second database) is
+# declared, per the current beta's actual requirements. See
+# docs/deployment.md.
+#
+# NOTE for whoever imports this: verify the field names below against
+# Render's current Blueprint schema in their dashboard/docs at import time.
+# This file was written without live access to Render's documentation (see
+# docs/deployment.md for why) — the values reflect the well-established,
+# long-standing Render Blueprint spec, but Render's schema does evolve, and
+# this hasn't been round-tripped through an actual Render import.
+services:
+  - type: web
+    name: frodocodo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    branch: claude/household-financial-os-90nezc
+    autoDeploy: true
+    # Plain liveness check (apps/web/app/api/health/route.ts) — no database
+    # access. Deliberately NOT /api/health/db: a transient Neon hiccup
+    # shouldn't make Render think the whole service is down and restart it.
+    # Check /api/health/db directly (see docs/deployment.md) to verify the
+    # database specifically.
+    healthCheckPath: /api/health
+    envVars:
+      # --- Secrets: the owner must set these directly in the Render
+      # dashboard (Environment tab). `sync: false` tells Render this value
+      # is expected but not defined here — never committed.
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: SEED_TOKEN
+        sync: false
+      # --- Non-secret configuration for the current beta ---
+      - key: NODE_ENV
+        value: production
+      - key: FINANCIAL_PROVIDER
+        value: mock
+      - key: AI_PROVIDER
+        value: stub
+      # --- Not currently required — left unset intentionally ---
+      # BASIQ_API_KEY: only if FINANCIAL_PROVIDER=basiq (see
+      #   docs/provider-integration.md before ever setting this).
+      # ANTHROPIC_API_KEY / ANTHROPIC_MODEL: only if AI_PROVIDER=anthropic.
+      # WORKER_SYNC_INTERVAL_MINUTES: only relevant if apps/worker is ever
+      #   deployed as its own service.

@@ -1,22 +1,41 @@
 // FrodoCodo — Household Financial Operating System
 // Domain model per project spec §36. Money is always Decimal — never Float.
 
-// Driver-adapter mode (engineType = "client"): the generated client has no
-// native query-engine binary at all — no binaryTargets, no
-// libquery_engine-*.so.node, nothing platform-specific to package for
-// Vercel. Query execution goes through the `pg` driver we hand it (see
-// packages/db/src/index.ts) instead of a bundled Rust engine. This
-// replaces three earlier attempts to make Next.js's output-file tracer
-// correctly find a native binary inside pnpm's install layout — see
-// docs/deployment.md for why those were abandoned instead of iterated on.
+// Standard Prisma Client with its native query-engine binary — the
+// well-trodden default. FrodoCodo previously ran on Vercel's serverless
+// platform, where getting this native binary correctly packaged into a
+// deployed function proved unreliable (multiple attempts, each verified
+// locally, each failing in production — see git history / docs/deployment.md
+// for anyone curious). That's a Vercel-serverless-packaging problem, not a
+// problem with the native engine itself: in a normal Docker/Linux
+// container (see Dockerfile), we control the whole filesystem directly —
+// there's no function-packaging step for a binary to go missing from, so
+// there's no reason to prefer the more complex driver-adapter setup
+// (@prisma/adapter-pg + pg) that was built specifically to route around
+// that problem. `binaryTargets` names the runtime platform explicitly:
+// "native" covers local dev on whatever OS you're running, and
+// "debian-openssl-3.0.x" covers the Dockerfile's node:22-bookworm-slim
+// base image.
 generator client {
-  provider   = "prisma-client-js"
-  engineType = "client"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // The app's runtime queries use this — set it to Neon's pooled (PgBouncer)
+  // connection string for a long-lived service like Render's, so many
+  // concurrent requests share a small number of backend connections.
+  url       = env("DATABASE_URL")
+  // `prisma migrate deploy` (and `migrate dev`, `db push`) use this instead
+  // of `url` whenever it's set — Prisma's own first-class support for
+  // exactly the pooled/direct split Neon requires (PgBouncer's transaction
+  // pooling mode doesn't support the advisory locks migrations need). Point
+  // this at Neon's direct (non-pooled) connection string. This replaced a
+  // hand-rolled multi-env-var-name resolver that existed only to guess
+  // which of several names Vercel's Neon integration used — Render just
+  // gets both env vars set explicitly and directly.
+  directUrl = env("DIRECT_URL")
 }
 
 // ---------- Enums ----------

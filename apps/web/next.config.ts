@@ -2,24 +2,12 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Prisma runs in driver-adapter mode (packages/db/prisma/schema.prisma:
-  // `engineType = "client"`) — no native OS-specific query-engine binary
-  // exists anywhere in this project. Declaring @prisma/client external
-  // leaves its runtime file read (see packages/db/src/wasmCompilerPatch.ts)
-  // to plain Node `require()` resolution instead of webpack bundling it.
-  //
-  // Deliberately NOT paired with an outputFileTracingIncludes entry for
-  // the WASM query compiler, even though that file still technically
-  // exists on disk after `prisma generate`. Three separate attempts to get
-  // Vercel's output-file tracer to reliably ship a Prisma-generated
-  // runtime file — this WASM compiler once, a native query-engine binary
-  // twice before it — each looked correct against a local build's own
-  // `.next/server/**/*.nft.json` trace and each still failed in production
-  // with the file missing. packages/db/src/wasmCompilerPatch.ts now
-  // patches the one fs.readFileSync call that would otherwise look for
-  // that file, so nothing in the deployed function depends on Vercel
-  // finding it — see docs/deployment.md for the full history and how
-  // that's verified.
+  // Prisma's generated client resolves its native query-engine binary via
+  // a runtime fs read computed from the OS/libc target — Prisma's own
+  // recommendation for Next.js is to declare it external so webpack leaves
+  // that resolution to plain Node `require()` instead of bundling it. This
+  // is generic Next.js + Prisma guidance, unrelated to any specific
+  // hosting platform.
   serverExternalPackages: ["@prisma/client"],
   transpilePackages: [
     "@frodocodo/shared",

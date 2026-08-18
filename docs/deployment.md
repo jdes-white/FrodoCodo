@@ -1,339 +1,299 @@
 # Deployment
 
-## Current status: a private beta on Vercel
+## Current status: a private beta on Render, via Docker
 
-`apps/web` is deployed to Vercel (Hobby/free plan), backed by a Neon
-Postgres database provisioned through Vercel's own Storage integration —
-both on free tiers, $0 cost at this app's scale. This was a deliberate,
-explicitly-confirmed scope decision (see `docs/product-decisions.md`):
-mock financial provider, stubbed AI, no real household data, and the app's
-own login screen still required — the deployment is reachable by URL over
-the public internet but not listed, linked, or indexed anywhere, and no
-data is visible without logging in.
+`apps/web` runs as a conventional, long-lived Node/Next.js web service on
+[Render](https://render.com), built from the repo's root `Dockerfile` and
+backed by a Neon Postgres database (unchanged from before the Render
+migration — see "Database (Neon)" below). This is a deliberate,
+explicitly-confirmed scope decision (see `docs/product-decisions.md`): mock
+financial provider, stubbed AI, no real household data, and the app's own
+login screen still required — the deployment is reachable by URL over the
+public internet but not listed, linked, or indexed anywhere, and no data is
+visible without logging in.
 
 `apps/worker` (the background sync/insight loop) is **not** deployed. It
 isn't needed for the beta to function: the mock provider's dataset is
 static, so there's nothing new for a background sync to pick up, and the
 dashboard always reads directly from Postgres regardless of whether the
 worker has ever run (§44). If a live-sync experience is ever wanted, the
-next step is a Vercel Cron Job hitting a route handler that runs the same
-`packages/worker` logic, not a separate always-on process — see the
-"Worker" section below.
+simplest next step on Render is a **Background Worker** service (Render's
+own service type for exactly this) running `apps/worker` from the same
+image/repo — not a Vercel Cron Job, since Vercel is no longer the target
+platform (see below).
 
-## Why Vercel (+ its Neon integration) specifically
+## Vercel was tried and deliberately abandoned — do not reintroduce it
 
-Vercel is built by the Next.js team, so deploying this app is close to
-zero-configuration, and its Storage tab provisions a free-tier Postgres
-database (Neon under the hood) inside the *same* account/dashboard — one
-account covers hosting and the database, which is simpler than any
-alternative for this app. See the chat history / `docs/product-decisions.md`
-for the account-creation and public-accessibility tradeoffs that were
-explicitly confirmed before deploying.
+FrodoCodo ran on Vercel's serverless platform first. It was abandoned after
+four separate, individually-verified attempts to get a Prisma-generated
+runtime file (first a native query-engine binary, later a WASM query
+compiler after switching Prisma to driver-adapter mode specifically to
+avoid the native binary) reliably included in a deployed serverless
+function. Every attempt looked correct against a local build's own file
+trace and failed in production anyway — including one verified by copying
+the exact traced file set into an isolated directory and running a real
+query against it, and one verified by grepping the compiled output for the
+literal bytes of the missing file. That pattern — passing every check
+available locally, failing in Vercel's actual packaging — is what triggered
+the move to Render: a normal Docker container has no serverless
+function-packaging step for a file to go missing from, because nothing gets
+selectively included by a tracer. We control the whole filesystem directly.
 
-## Why deploys weren't happening (diagnosed, not guessed)
+If you're a future Claude Code session (or a human) reading this because
+FrodoCodo is having a deployment problem: **do not go back to Vercel, and
+do not reintroduce Vercel-specific packaging workarounds** (output-file
+tracing globs, WASM byte-embedding, driver-adapter Prisma modes chosen
+*for packaging reasons* rather than reliability, `serverExternalPackages`
+tuned around serverless bundling quirks, function `maxDuration` settings,
+multi-candidate `DATABASE_URL` env-var-name guessing). None of that
+architecture exists in this repo anymore, on purpose. If Render itself
+ever needs to be replaced, evaluate it on its own merits — but the specific
+failure mode that killed Vercel here (opaque platform-side packaging you
+can't fully inspect or reproduce locally) is worth weighing heavily against
+whatever replaces it.
 
-Vercel kept serving the very first commit (`2889a60`, pre-dating this whole
-app) no matter what got pushed. The repo-side diagnosis: `main` has **zero**
-commits since that initial import — all real work lives on
-`claude/household-financial-os-90nezc`, currently 7+ commits ahead. Vercel
-only auto-builds on pushes to its configured **Production Branch**. If that
-setting is still `main` (its default when a project is first imported), it
-is *correctly* doing nothing — there's nothing new on `main` to build. This
-setting lives only in Vercel's project database, not in this repo, so it
-cannot be fixed by a commit — see the "One thing that can't be fixed from
-the repo" note at the end of this section.
+The full turn-by-turn history of the Vercel attempts (and why each one
+looked right and wasn't) lives in this repository's git history and
+conversation log from that period, not duplicated here — this section is
+the durable summary.
 
-The **Vercel project-root convention is: Root Directory = `apps/web`.**
-That's where `package.json` (with `next` as a real dependency) lives, so
-Vercel's zero-config Next.js detection and its automatic pnpm-workspace
-monorepo install (installing from the true repo root so sibling packages
-like `@frodocodo/domain` resolve, even though the build itself runs scoped
-to `apps/web`) both work with no extra configuration — this was confirmed
-empirically: a deploy with Root Directory=`apps/web` completed the entire
-`next build` successfully, including resolving every workspace package.
+## Architecture
 
-A root-level `vercel.json` was tried at one point to make deployment work
-regardless of Root Directory, and made things *worse*: Vercel still reads
-a repo-root `vercel.json` even when Root Directory is set to a subfolder,
-and resolves its path fields (like `outputDirectory`) **relative to Root
-Directory** — so `outputDirectory: "apps/web/.next"` resolved to
-`apps/web/apps/web/.next`, which doesn't exist. **There is no root-level
-`vercel.json` in this repo** — don't reintroduce one for this app; see
-point 5 below for what actually goes in `apps/web/package.json` instead.
+| Concern | Approach |
+|---|---|
+| Runtime | Long-lived Node process (`next start`) inside a Docker container, not a serverless function |
+| Prisma | Standard Prisma Client with its native query-engine binary — see "Database runtime: Prisma" below |
+| Database | Neon Postgres (unchanged), reached over a normal TCP connection |
+| Migrations | `prisma migrate deploy`, run automatically on container start — see "Migrations" below |
+| Hosting | Render Web Service, Docker runtime, Free plan |
+| Background worker | Not deployed (see above) |
 
-## What makes this monorepo deployable on Vercel
+## Database (Neon)
 
-A plain `next build` isn't enough for this repo — these things had to be
-in place, and stay in place if you touch these files:
+The Neon Postgres database itself is unchanged by this migration — same
+schema, same data, same project. What changed is how the connection
+strings are supplied and used:
 
-1. **Prisma Client must be (re)generated on every install.**
-   `packages/db/package.json` has `"postinstall": "node scripts/generate.mjs"`
-   — pnpm runs this automatically for every workspace package during `pnpm
-   install`, which is what Vercel's build runs first. Without it, the build
-   fails looking for a Prisma Client that was never generated (it's
-   git-ignored, not committed).
-2. **Prisma runs in driver-adapter mode: no native query-engine binary
-   exists anywhere in this deployment, by design — this replaced three
-   failed attempts at packaging one.** The history, in order:
+- `DATABASE_URL` — Neon's **pooled** (PgBouncer) connection string. The
+  running app's queries use this (`packages/db/prisma/schema.prisma`'s
+  `datasource db { url = env("DATABASE_URL") ... }`), which suits a
+  long-lived service handling many requests against a small number of
+  backend connections.
+- `DIRECT_URL` — Neon's **direct** (non-pooled) connection string. Prisma's
+  own `directUrl` datasource field (added alongside `url` in the same
+  block) makes every `prisma migrate` command use this automatically
+  instead — PgBouncer's transaction pooling mode doesn't support the
+  advisory locks `migrate deploy` needs. This replaced a hand-rolled
+  script that guessed which of several possible env-var names Vercel's
+  Neon integration had used; Render just gets both set explicitly.
 
-   - **Attempt 1**: `generator client { binaryTargets = ["native", "rhel-openssl-3.0.x"] }`
-     plus the plain client (`new PrismaClient({ datasourceUrl })`). Builds
-     succeeded; the deployed function crashed on its first query with
-     "Prisma Client could not locate the Query Engine" — the binary wasn't
-     making it into the Lambda.
-   - **Attempt 2**: `outputFileTracingIncludes` force-including the engine
-     binary's path inside pnpm's nested `.pnpm` virtual store
-     (`node_modules/.pnpm/@prisma+client@<hash>/node_modules/.prisma/client/`).
-     This looked correct by every local check available —
-     `.next/server/app/**/*.nft.json` listed the binary after the build —
-     and **production failed the same way anyway**, proving a local
-     `.nft.json` grep is not sufficient proof of what Vercel actually
-     deploys.
-   - **Attempt 3**: root-level `.npmrc` with `node-linker=hoisted`, flattening
-     `node_modules` so the binary sat at a plain, well-supported path
-     instead of nested inside `.pnpm`. This one was verified rigorously —
-     the exact file set an `.nft.json` listed was copied into an isolated
-     directory reproducing a real Vercel Lambda's `/var/task/...` layout,
-     and a real Prisma query succeeded from inside it with zero access to
-     the project's actual `node_modules` — and it worked. `/login` came
-     back up.
-   - Then a **new** failure surfaced on `/login` a build later:
-     `FUNCTION_INVOCATION_TIMEOUT` from the seed endpoint (unrelated —
-     fixed by batching `seedDemoHousehold`'s ~450 sequential DB round-trips
-     into a handful of bulk statements, see the git history), and after
-     that, the query-engine-not-found error itself came back on `/login`
-     specifically even though the isolated-directory test had proven the
-     flat-layout fix worked. At that point continuing to chase the native
-     binary's packaging stopped being the right call — three attempts,
-     each individually well-verified, each still capable of breaking again
-     — and the architecture changed instead.
+Both come from Neon's dashboard (or `neon.tech`'s connection-string picker,
+which offers pooled/direct variants directly) and are set as Render
+environment variables — never committed.
 
-   **The actual fix: stop shipping a native query engine at all.**
-   `packages/db/prisma/schema.prisma`'s generator sets `engineType = "client"`
-   (Prisma's driver-adapter mode), and `packages/db/src/index.ts` constructs
-   `PrismaClient` with `adapter: new PrismaPg(pool)` — a real `pg.Pool`
-   (`@prisma/adapter-pg` + the `pg` package) — instead of a bare
-   `datasourceUrl`. Prisma Client no longer owns a database connection or a
-   compiled Rust engine for query execution at all; it generates SQL and
-   hands every query to `pg`, which is a battle-tested, pure-JS-resolvable
-   driver with no platform-specific binary of its own. `binaryTargets` is
-   gone from the schema entirely — there's no per-platform variant to get
-   wrong, because there's no native binary to select one for.
+## Database runtime: Prisma
 
-   This is not a workaround layered on top of the native-engine
-   architecture; it removes the entire class of problem that produced three
-   separate production failures.
+Standard Prisma Client, native query-engine binary — deliberately the
+"boring" option:
 
-   **One binary asset remains**, and it's a materially different animal:
-   `node_modules/.prisma/client/query_compiler_bg.wasm`, a small (~2MB),
-   platform-agnostic WebAssembly query *compiler* (SQL generation only — no
-   connection, no execution, and the *same file* regardless of OS/libc, so
-   there's no `binaryTargets`-style "wrong platform" failure mode possible).
-   It's loaded via `fs.readFileSync` at runtime by the plain `@prisma/client`
-   import.
+```prisma
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+```
 
-   A cleaner-sounding alternative was tried and rejected: importing
-   `@prisma/client/wasm` instead, which loads the same file via a real
-   `import()` rather than a runtime file read — in principle lets webpack
-   bundle it as a normal asset instead of needing any tracing help at all.
-   It built successfully and traced automatically with zero custom config,
-   but **every query failed at runtime** with "the loaded wasm module was
-   unexpectedly undefined or null": that entry point is built for
-   edge/worker runtimes with native ESM-WebAssembly import support, and the
-   module shape it expects doesn't match what webpack's `asyncWebAssembly`
-   experiment produces when bundling a Node.js server route. Diagnosed by
-   reading the generated loader code directly
-   (`node_modules/.prisma/client/wasm.js` and its
-   `wasm-worker-loader.mjs`/`wasm-edge-light-loader.mjs` siblings), not by
-   guessing. Reverted to the plain `@prisma/client` import, which is what
-   Prisma actually tests against Node.js server runtimes.
+`"native"` covers local development on whatever OS you're running;
+`"debian-openssl-3.0.x"` covers the Dockerfile's `node:22-bookworm-slim`
+base image. Both the build stage and the runtime stage of the Dockerfile
+use the same Debian-based image specifically so the binary generated at
+build time is guaranteed compatible with the OS it runs on at runtime.
 
-   The first fix attempted for this file was the same class of fix as the
-   native engine before it: `apps/web/next.config.ts` kept
-   `serverExternalPackages: ["@prisma/client"]` and added an
-   `outputFileTracingIncludes` narrowed to just `query_compiler_bg.*`. It
-   showed up correctly in `.next/server/app/**/*.nft.json` for every route
-   that touches Prisma (all 9 of them) — and **production still failed**,
-   `ENOENT` on the exact same file, confirmed via the `/api/health/db`
-   endpoint's sanitized error response. That's four attempts now at getting
-   Vercel's output-file tracer to ship a Prisma-generated runtime file
-   (`binaryTargets` once, a `.pnpm`-path glob for the native engine twice,
-   this glob for the WASM compiler once) where a local build's own trace
-   said it would work and production disagreed anyway. At that point,
-   trying a fifth variation on "get the tracer to include this file"
-   stopped being a reasonable bet.
+This is a deliberate reversion from the driver-adapter architecture
+(`@prisma/adapter-pg` + `pg`) used during the Vercel period, which existed
+*only* to avoid shipping this native binary through Vercel's unreliable
+function packaging. In a Docker container there's no packaging step to
+distrust — we `COPY` the built application (including `node_modules` and
+the generated Prisma client) into the final image ourselves, so the
+question "did the deployment platform correctly include this file" simply
+doesn't arise. `packages/db/src/index.ts` is back to a plain
+`new PrismaClient()`, reading its connection string directly from
+`env("DATABASE_URL")` in the schema.
 
-   **The actual fix removes the file-system dependency instead of trying
-   to satisfy it.** `packages/db/scripts/generate.mjs` now runs one more
-   step after `prisma generate`: it reads the freshly-generated
-   `query_compiler_bg.wasm`, base64-encodes it, and writes it into a
-   generated (git-ignored, like the rest of the Prisma client output)
-   `packages/db/src/generated/queryCompilerWasm.ts` as a plain string
-   constant. `packages/db/src/wasmCompilerPatch.ts` — imported for its side
-   effect at the very top of `packages/db/src/index.ts`, before
-   `@prisma/client` — patches the one `fs.readFileSync` call the generated
-   client uses to load that file (`node_modules/.prisma/client/index.js`,
-   inside `config.compilerWasm.getQueryCompilerWasmModule`): when the
-   requested filename matches, it returns the embedded bytes instead of
-   touching disk at all. `apps/web/next.config.ts` no longer has any
-   `outputFileTracingIncludes` entry for this file — there's nothing to
-   include, since nothing at runtime asks the real filesystem for it.
-   `serverExternalPackages: ["@prisma/client"]` stays, so webpack still
-   leaves the (now-patched) file read alone rather than bundling it.
+`packages/db/package.json`'s `"postinstall": "prisma generate"` still
+regenerates the client (and its binary) on every `pnpm install` — this
+needs no database connection and succeeds even with no `.env` file
+present, which is why the Docker build's `deps` stage can run it without
+any secrets baked into the image.
 
-   **How this was verified** — deliberately stronger than the tracing-glob
-   attempts, since a passing `.nft.json` check had already produced two
-   false negatives by this point:
-   - Grepped a real built chunk (`.next/server/chunks/*.js`) for the
-     literal base64 content of the WASM file and found it physically
-     present, byte-for-byte, confirming the bytes are compiled into the JS
-     bundle itself rather than living in a separate file.
-   - Copied the exact file set `/login`'s `.nft.json` listed into an
-     isolated directory reproducing a real Vercel Lambda's `/var/task/...`
-     layout — with the real `.wasm` file **deleted entirely**, not merely
-     absent from the copy list — and ran the same `$queryRaw` and
-     `prisma.user.findUnique` calls `/login` makes from inside it. Logged
-     confirmation that `fs.existsSync` on the real path returned `false`
-     and that the patch intercepted the read; the query still succeeded.
-     This is the strongest form of this proof used anywhere in this
-     history: not "the trace says the file is there," but "the file
-     provably isn't there and it still works."
-   - Ran the full pipeline for real: `prisma migrate deploy` against a live
-     Postgres, `next build`, `next start`, `GET /api/health/db` (`{"ok":true}`),
-     a real `POST /api/admin/seed`, and a real headless-browser login as
-     `admin@frodocodo.household` followed by visiting `/transactions`,
-     `/plan`, `/insights`, and `/settings` — zero non-2xx/3xx HTTP responses
-     anywhere, with real seeded data rendering on each page (screenshotted).
+## Containerization (Dockerfile)
 
-   If a Prisma runtime error ever surfaces again: don't trust a local
-   `.nft.json` grep as sufficient proof by itself. Copy the exact file set
-   an `.nft.json` lists into an isolated directory (nothing else on the
-   path) and run a real Prisma query against only those files — the way
-   every one of these was actually diagnosed, not guessed at.
-3. **Migrations run automatically on every deploy, seeding does not.**
-   `apps/web/package.json`'s `vercel-build` script (Vercel uses this
-   instead of `build` automatically, if present) runs
-   `apps/web/scripts/vercel-build.mjs`, which does `prisma migrate deploy`
-   then `next build`. `migrate deploy` only applies pending migrations —
-   safe and idempotent on every push. Seeding is deliberately **not** part
-   of this: it wipes existing households first (see
-   `packages/db/src/seedHousehold.ts`), so running it on every deploy would
-   erase real usage data. Seeding instead runs on demand via
-   `POST /api/admin/seed` (`apps/web/app/api/admin/seed/route.ts`),
-   protected by a `SEED_TOKEN` env var — this also means the database
-   connection string never has to leave Vercel's own environment variable
-   store to populate demo data.
-4. **The database connection string's env var name isn't assumed.**
-   Depending on how a Postgres integration provisions the database, the
-   connection string can land under different names — `DATABASE_URL`,
-   `POSTGRES_PRISMA_URL`/`POSTGRES_URL` (pooled), or
-   `DATABASE_URL_UNPOOLED`/`POSTGRES_URL_NON_POOLING` (direct). Guessing
-   wrong means a silent "environment variable not found" failure.
-   `packages/db/scripts/resolveDatabaseUrl.mjs` checks all of them; the
-   build wrapper (`apps/web/scripts/vercel-build.mjs`) and the `postinstall`
-   wrapper (`packages/db/scripts/generate.mjs`) both use it for build-time
-   Prisma CLI calls, preferring a **direct/unpooled** connection for
-   `migrate deploy` specifically (Prisma's migration engine needs one —
-   advisory locks don't work reliably through pgbouncer's transaction
-   pooling mode). The running app (`packages/db/src/index.ts`) does the
-   same resolution at runtime and passes it to the `pg.Pool` that backs
-   Prisma's driver adapter (`new Pool({ connectionString })`), preferring
-   the **pooled** connection there (better suited to serverless's many
-   short-lived connections; node-postgres's unnamed prepared statements are
-   safe through pgbouncer's transaction pooling mode).
-5. **No root-level `vercel.json` — `apps/web/package.json`'s own
-   `vercel-build` script is the single build entry point.** With Root
-   Directory=`apps/web`, Vercel's zero-config Next.js detection finds
-   `package.json` there (real `next` dependency → Framework Preset =
-   Next.js) and automatically runs the `vercel-build` script instead of
-   `build` when one is present — no Build/Install/Output Directory
-   overrides needed in the Vercel dashboard, and none should be set. That
-   script (`apps/web/scripts/vercel-build.mjs`) runs with its working
-   directory already at `apps/web` (Root Directory), so its relative paths
-   into `packages/db` climb up through the repo root as normal
-   (`../../packages/db/...`).
+Multi-stage build, root `Dockerfile`:
 
-### Two things that can't be fixed from the repo
+1. **`deps`** — copies every workspace package's `package.json` (plus the
+   lockfile and the Prisma schema) and runs `pnpm install --frozen-lockfile`.
+   This is its own stage so Docker's layer cache can skip reinstalling
+   dependencies on every build when only application source changed.
+2. **`builder`** — copies the rest of the source and runs
+   `pnpm --filter @frodocodo/web build`.
+3. **`runner`** — copies the *entire* `/app` directory tree (not just
+   `node_modules`) from `builder`, runs as a non-root user, and starts the
+   app via `apps/web/scripts/start.sh`.
 
-- **Root Directory** (Vercel → Project → Settings → General) must be
-  `apps/web`. Framework Preset should read/auto-detect as Next.js once
-  that's correct; Build Command, Install Command, and Output Directory
-  should all be left **unset/blank** (no overrides) — the defaults driven
-  by Root Directory + `apps/web/package.json`'s `vercel-build` script are
-  exactly what's needed.
-- **Production Branch** (Vercel → Project → Settings → Git) must be
-  `claude/household-financial-os-90nezc` for pushes to that branch to
-  auto-deploy to the production URL.
+**Why the whole tree, not a trimmed `node_modules`:** this is a pnpm
+workspace. Workspace packages (`@frodocodo/db`, `@frodocodo/domain`, etc.)
+are symlinked into `node_modules` rather than copied there, with each
+symlink pointing at the real package directory under `packages/` or
+`apps/`. Copying `node_modules` alone would leave those symlinks dangling.
+Next.js's `output: "standalone"` mode (which traces and copies only the
+files a build actually needs) was considered and deliberately not used —
+after three rounds of a build-time file tracer being wrong about what a
+deployment needed, a build known to be self-sufficient beats one more
+tracer to trust blind. The image is larger as a result; for a two-user
+beta, that tradeoff is fine (see "Free-tier constraints" below).
 
-Both are stored in Vercel's own project configuration, not in this
-repository, so no commit can change either — they're set once in the
-dashboard (or via the Vercel API/CLI with a token, which this repo does not
-have and should not be given for this).
+**Signal handling:** the final `CMD` runs `apps/web/scripts/start.sh`,
+which `exec`s into the `next` binary directly as its last step (rather than
+via `pnpm run`/`npm run`, which would leave an extra shell/process layer
+around the actual server). That matters because Docker/Render send
+`SIGTERM` to the container's PID 1 on every deploy or restart — a wrapper
+process can absorb that signal instead of forwarding it, leaving Next.js
+running until a hard `SIGKILL` after the full grace period instead of
+shutting down promptly.
+
+**Health check:** `HEALTHCHECK` in the Dockerfile hits `GET /api/health`
+(the plain liveness route — see "Health checks" below) using Node's
+built-in `fetch`, since the slim base image has no `curl`/`wget`.
+
+## Migrations
+
+`apps/web/scripts/start.sh` runs `prisma migrate deploy` once, synchronously,
+**before** starting the Next.js server — every time the container starts.
+This is deliberately not a separate Render pre-deploy/release-phase step:
+`prisma migrate deploy` takes a Postgres advisory lock while applying
+migrations, so it's safe to run redundantly or from multiple instances
+starting concurrently during a deploy — a second instance just waits for
+the lock and then sees "no pending migrations" rather than racing the
+first. That makes running it here safe even if this service is ever scaled
+beyond Render's free single-instance tier, without depending on a
+Render-plan-specific feature.
+
+Never use `prisma migrate dev` (development-only, can prompt and can be
+destructive) in this path — only `migrate deploy`, which only applies
+already-committed migration files.
+
+## Health checks
+
+Two separate endpoints, deliberately:
+
+- **`GET /api/health`** — plain liveness check, no database access. This
+  is what `render.yaml`'s `healthCheckPath` points at, and what the
+  Dockerfile's own `HEALTHCHECK` uses. Answers "is the Node process up,"
+  which is the question a platform-level health check needs answered.
+- **`GET /api/health/db`** — runs a real query (`SELECT 1`) through the
+  exact same `prisma` singleton the rest of the app uses. Answers "can the
+  app currently reach the database." Deliberately *not* what Render's
+  platform health check uses: a transient Neon blip failing this
+  temporarily shouldn't make Render decide the whole service is down and
+  restart it — that doesn't fix a database-side problem and just adds a
+  cold start on top of it. Use this one for manual/application-level
+  verification (`curl https://<your-render-url>/api/health/db`, expect
+  `{"ok":true}`).
+
+`/api/health/db`'s failure response is sanitized (see
+`packages/db/src/dbErrors.ts`): only an error class, a Prisma/Postgres
+error code if present, and a redacted, length-capped message — never a
+connection string, credential, or full stack trace.
+
+## Demo login
+
+```
+admin@frodocodo.household
+frodocodo-demo
+```
+
+Created by `seedDemoHousehold` (`packages/db/src/seedHousehold.ts`), which
+wipes and repopulates a single synthetic household — see
+`packages/db/prisma/seed.ts` for the local CLI entry point and
+`apps/web/app/api/admin/seed/route.ts` for the production one.
+
+**Do you need to seed again after the Render migration?** No, if the
+existing Neon database already has the demo household — the database
+itself didn't change, only the compute layer serving it. Check first with
+`GET /api/health/db` (confirms connectivity) and then by attempting to log
+in with the credentials above. Only call `POST /api/admin/seed` if login
+fails because the household genuinely doesn't exist yet.
+
+## Seed endpoint
+
+`POST /api/admin/seed`, gated by the `SEED_TOKEN` env var
+(`x-seed-token` header or `?token=` query param) — unchanged in behavior
+from the Vercel period. It is:
+
+- **Destructive**: wipes existing households before repopulating. Never
+  call it against a database holding real household data.
+- **Demo-only**: exists solely to populate/reset the synthetic beta
+  household. Not wired into the build or startup path — it only runs when
+  explicitly triggered.
+- Planned to be **removed or disabled** before any real household
+  financial data is introduced (see `docs/product-decisions.md`).
 
 ## Environment variables
 
-See `.env.example` for the full list with inline explanations. On Vercel,
-`DATABASE_URL` (plus a few Postgres-adjacent variables) is set automatically
-by the Storage → Postgres integration — nothing to paste in manually.
-Everything else is set once under Project Settings → Environment Variables:
-
 | Variable | Required | Notes |
 |---|---|---|
-| `DATABASE_URL` | Yes | Set automatically by Vercel's Postgres (Neon) integration |
-| `AUTH_SECRET` | Yes | Random 32-byte secret for session signing (`openssl rand -base64 32`) |
-| `SEED_TOKEN` | Yes, to (re)seed demo data | Random secret (`openssl rand -base64 24`) — gates `POST /api/admin/seed` |
-| `FINANCIAL_PROVIDER` | No (default `mock`) | Left as `mock` for the beta — see `docs/provider-integration.md` before ever setting `basiq` |
-| `BASIQ_API_KEY` | Only if `FINANCIAL_PROVIDER=basiq` | Not set for the beta |
+| `DATABASE_URL` | Yes (secret) | Neon's **pooled** connection string |
+| `DIRECT_URL` | Yes (secret) | Neon's **direct** connection string — used by `prisma migrate` only |
+| `AUTH_SECRET` | Yes (secret) | Signs the session cookie (`apps/web/lib/session.ts`). Generate with `openssl rand -base64 32` |
+| `SEED_TOKEN` | Yes (secret), to (re)seed demo data | Generate with `openssl rand -base64 24` — gates `POST /api/admin/seed` |
+| `NODE_ENV` | No (default via Dockerfile: `production`) | |
+| `FINANCIAL_PROVIDER` | No (default `mock`) | Left as `mock` for the beta |
 | `AI_PROVIDER` | No (default `stub`) | Left as `stub` for the beta |
-| `ANTHROPIC_API_KEY` | Only if `AI_PROVIDER=anthropic` | Not set for the beta |
-| `WORKER_SYNC_INTERVAL_MINUTES` | No (default 60) | Only relevant if `apps/worker` is ever deployed |
+| `BASIQ_API_KEY` | Not currently required | Only if `FINANCIAL_PROVIDER=basiq` — see `docs/provider-integration.md` first |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Not currently required | Only if `AI_PROVIDER=anthropic` |
+| `WORKER_SYNC_INTERVAL_MINUTES` | Not currently required | Only relevant if `apps/worker` is ever deployed as its own service |
 
-## Ongoing iteration
+`render.yaml` declares all of these; the four secrets are marked
+`sync: false` (Render prompts for them in the dashboard, nothing is
+committed).
 
-The Vercel project is connected directly to the
-`claude/household-financial-os-90nezc` GitHub branch as its Production
-Branch — every push to that branch triggers an automatic redeploy (typically
-live within 1-2 minutes), running the migration step above automatically.
-No manual redeploy step, no re-entering credentials.
+## Render deployment
 
-## If real accounts are ever connected
+`render.yaml` at the repo root is a Render Blueprint — importing this repo
+on Render should configure the web service automatically (Docker runtime,
+this `Dockerfile`, health check path, auto-deploy from
+`claude/household-financial-os-90nezc`) with no manual build/start command
+entry needed. See the root-level handoff notes for the exact remaining
+manual steps (creating the Render account/service, pasting the four
+secret values). `render.yaml`'s own comments note that its field names
+haven't been round-tripped through an actual Render import — verify them
+against Render's current dashboard/Blueprint schema at import time.
 
-1. Complete the integration in `docs/provider-integration.md`, then set
-   `FINANCIAL_PROVIDER=basiq` and `BASIQ_API_KEY` on Vercel.
-2. Set `AI_PROVIDER=anthropic` and `ANTHROPIC_API_KEY` if real AI narratives
-   are wanted (optional — the stub is fully functional).
-3. Reconsider the free-tier hosting choice at that point: real financial
-   data raises the bar on encryption-at-rest, backups, and access controls
-   beyond what a free-tier database offers by default — see
-   `docs/security-privacy.md`.
-4. Do **not** call `POST /api/admin/seed` again once real data exists — it
-   wipes households first.
+## Free-tier constraints
 
-## Worker (not currently deployed)
+This is a two-user household beta. The deployment is deliberately sized
+for that:
 
-If/when a live-sync experience is wanted: the simplest option is a Vercel
-Cron Job (Hobby plan supports a limited number of daily cron triggers)
-hitting a new route handler that calls the same `syncConnection` /
-`generateInsightsForHousehold` functions apps/worker uses today
-(`apps/worker/src/syncConnection.ts`, `generateInsights.ts`) — not a
-separate always-on process, which Vercel's serverless model doesn't
-support anyway. `apps/worker` as it exists today remains the right choice
-for a self-hosted/VM deployment (Fly.io, Railway, etc.), documented for
-that path below.
+- Render **Free** web service plan — sleeps when unused, cold-starts on
+  the next request. Acceptable for this stage.
+- No Redis, queues, additional databases, or paid observability —
+  nothing the web app doesn't genuinely need to operate is deployed.
+- `apps/worker` stays undeployed (see above).
 
-### Self-hosted alternative (worker, or the whole app)
+## Future architecture awareness
 
-| Component | Recommendation | Why |
-|---|---|---|
-| `apps/web` | Vercel | See above |
-| `apps/worker` | Fly.io or Railway | Needs to be a long-running process — serverless functions have execution-time limits unsuitable for sync jobs |
-| Database | Neon (serverless Postgres) | Works standalone too, not just via Vercel's integration |
+None of the above tightly couples FrodoCodo's product logic to Render.
+When any of these become real requirements, they're independent decisions,
+not a reason to revisit the deployment architecture:
 
-```bash
-# Provisioning a long-running worker anywhere Node runs:
-pnpm --filter @frodocodo/db exec prisma migrate deploy   # once, or on every deploy — idempotent
-pnpm --filter @frodocodo/worker start
-```
+- Real Basiq/Open Banking integration — see `docs/provider-integration.md`.
+- Real household financial data — reconsider Neon's free-tier
+  encryption-at-rest/backup posture first, see `docs/security-privacy.md`.
+- A second household user, and later additional households.
+- Runtime LLM integration (`AI_PROVIDER=anthropic`).
+- A native React Native/Expo mobile client — talks to the same API routes.
+- A custom domain, and a paid/always-on Render plan once cold starts
+  matter.
 
 ## Local development
 
@@ -345,3 +305,25 @@ pnpm db:seed
 pnpm dev            # apps/web
 pnpm dev:worker      # apps/worker, separate terminal
 ```
+
+## Local production validation (Docker)
+
+Build and run the actual production image locally before trusting a
+deploy:
+
+```bash
+docker build -t frodocodo .
+docker run --rm -p 3000:3000 \
+  -e DATABASE_URL="postgresql://frodocodo:frodocodo@host.docker.internal:5432/frodocodo?schema=public" \
+  -e DIRECT_URL="postgresql://frodocodo:frodocodo@host.docker.internal:5432/frodocodo?schema=public" \
+  -e AUTH_SECRET="$(openssl rand -base64 32)" \
+  -e SEED_TOKEN="local-test-token" \
+  frodocodo
+```
+
+Then, against `http://localhost:3000`: `GET /api/health` and
+`GET /api/health/db` both return `{"ok":true}`; `POST /api/admin/seed`
+(with the `x-seed-token` header) succeeds; and logging in as
+`admin@frodocodo.household` / `frodocodo-demo` reaches the authenticated
+dashboard, with `/transactions`, `/plan`, `/insights`, and `/settings` all
+loading.

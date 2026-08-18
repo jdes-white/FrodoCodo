@@ -1,13 +1,6 @@
 import { NextResponse } from "next/server";
 import { seedDemoHousehold } from "@frodocodo/db";
 
-// Hobby's ceiling for maxDuration is 60s — already the max this plan allows,
-// so a timeout can't be fixed by raising this further (see
-// seedDemoHousehold in packages/db/src/seedHousehold.ts, which batches its
-// writes specifically to fit inside this ceiling against Neon's real
-// network latency instead of relying on a bigger number here).
-export const maxDuration = 60;
-
 /**
  * One-time (or reset-on-demand) trigger for populating the beta deployment
  * with synthetic demo data — the same MockProvider -> ledger pipeline the

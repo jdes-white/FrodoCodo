@@ -15,7 +15,5 @@ apps/web/.next/
 apps/web/e2e/__screenshots__/
 apps/web/test-results/
 apps/web/playwright-report/
-packages/db/generated/
-packages/db/src/generated/
 packages/db/prisma/dev.db
 .vscode/

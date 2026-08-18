@@ -1,0 +1,32 @@
+# Keep the build context small and make sure the image only ever contains
+# what gets installed/built *inside* the container — never host artifacts,
+# and never secrets.
+node_modules/
+**/node_modules/
+.pnpm-store/
+.next/
+**/.next/
+dist/
+build/
+.turbo/
+coverage/
+*.log
+*.tsbuildinfo
+
+# Secrets: real env vars are injected by Render at runtime, never baked
+# into the image or committed. .env.example is fine to include but isn't
+# needed at build time either.
+.env
+.env.*
+!.env.example
+
+.git/
+.github/
+.vscode/
+.DS_Store
+
+# Local Postgres data volume, dev-only sqlite, Playwright artifacts.
+packages/db/prisma/dev.db
+apps/web/e2e/__screenshots__/
+apps/web/test-results/
+apps/web/playwright-report/

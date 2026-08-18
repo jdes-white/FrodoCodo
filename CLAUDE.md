@@ -71,98 +71,71 @@ spec's non-negotiables — the short version is below.
 
 ## Architecture rules
 
-- **No root-level `vercel.json`.** One was tried to make deployment
-  independent of Vercel's Root Directory setting and made things worse:
-  Vercel reads a repo-root `vercel.json` even when Root Directory is set to
-  a subfolder, and resolves its path fields *relative to Root Directory* —
-  so `outputDirectory: "apps/web/.next"` resolved to the nonexistent
-  `apps/web/apps/web/.next`. The project-root convention is Root
-  Directory=`apps/web` in the Vercel dashboard (not fixable from the repo);
-  `apps/web/package.json`'s own `vercel-build` script is the build entry
-  point Vercel finds automatically via zero-config Next.js detection — no
-  vercel.json, no dashboard Build/Install/Output overrides. See
-  `docs/deployment.md`.
-- **Prisma runs in driver-adapter mode — there is no native query-engine
-  binary anywhere in this project, and it must stay that way.**
-  `packages/db/prisma/schema.prisma`'s generator sets `engineType = "client"`,
-  and `packages/db/src/index.ts` constructs `PrismaClient` with an
-  `adapter: new PrismaPg(pool)` (a `pg.Pool`, `@prisma/adapter-pg`) instead
-  of passing a bare connection string. Prisma Client itself never opens a
-  connection or ships a compiled Rust engine for query execution — every
-  query goes through the plain `pg` driver we hand it. This replaced three
-  successive attempts to make Vercel reliably package a platform-specific
-  `libquery_engine-rhel-openssl-3.0.x.so.node` binary (binaryTargets, then
-  `outputFileTracingIncludes` pointed at pnpm's nested `.pnpm` store, then
-  the same glob after flattening `node_modules` — each one looked correct
-  in a local `next build` + `.nft.json` inspection and then failed in
-  production anyway). Don't reintroduce `binaryTargets` or switch back to
-  the plain `env("DATABASE_URL")` + bare `new PrismaClient()` pattern
-  without re-reading `docs/deployment.md`'s full history first.
-  - There is still exactly **one** binary asset the generated client
-    produces: a small (~2MB), platform-agnostic WASM query *compiler* (SQL
-    generation, not connection/execution) at
-    `node_modules/.prisma/client/query_compiler_bg.wasm` — but **nothing in
-    the deployed app depends on that file existing on disk**. A fourth
-    attempt at getting Vercel's output-file tracer to ship it (narrowing
-    `outputFileTracingIncludes` to just that file, after `binaryTargets`
-    once and a `.pnpm`-path glob twice for the native engine before it)
-    produced the exact same failure pattern as the first three: correct by
-    every local `.nft.json` check, `ENOENT` in the actual deployed
-    function. Continuing to vary the tracing approach stopped being a
-    reasonable bet at that point. Instead, `packages/db/scripts/generate.mjs`
-    base64-embeds the WASM file's bytes into a generated (git-ignored)
-    `packages/db/src/generated/queryCompilerWasm.ts` on every
-    `prisma generate`, and `packages/db/src/wasmCompilerPatch.ts` — imported
-    for its side effect before `@prisma/client`, in `packages/db/src/index.ts`
-    — patches the one `fs.readFileSync` call the generated client uses to
-    load that file, returning the embedded bytes instead. The bytes end up
-    physically compiled into the JS bundle (confirmed by grepping a built
-    chunk for the literal base64 content), not a separate file for anything
-    to trace or lose. Verified by running a real query from an isolated
-    directory with the real `.wasm` file deleted entirely — not just
-    untraced, physically absent — see `docs/deployment.md`.
-  - If a Vercel deploy ever throws a Prisma runtime error again: don't
-    trust a local `.nft.json` grep as sufficient proof by itself — copy the
-    exact file set an `.nft.json` lists into an isolated directory (nothing
-    else on the path) and run a real Prisma query against only those files,
-    the way every round of this was actually diagnosed. See
-    `docs/deployment.md` for the full history.
-  - **The `pg.Pool` in `packages/db/src/index.ts` must always have an
-    `error` listener attached.** node-postgres crashes the entire process
-    on an unhandled `error` event from an idle pooled client — and cloud
-    Postgres proxies (Neon's included) routinely close idle connections,
-    triggering exactly that. Local Postgres essentially never does this, so
-    losing this listener wouldn't show up in local testing at all, only in
-    production against Neon. Don't remove it.
-- `packages/db/package.json`'s `"postinstall": "node scripts/generate.mjs"`
-  is what makes the Prisma Client exist after `pnpm install` on a machine
-  that's never run `prisma generate` manually (every CI/deploy environment,
-  including Vercel). Don't remove it, and don't collapse it back to a bare
-  `prisma generate` — the wrapper resolves the DB connection string across
-  several possible env var names first (see next point), and it also
-  base64-embeds the WASM query compiler into
-  `packages/db/src/generated/queryCompilerWasm.ts` (git-ignored, like the
-  rest of the generated Prisma client) — see the driver-adapter bullet
-  above. If that embedding step is ever removed without also reverting
-  `packages/db/src/wasmCompilerPatch.ts`, the build will fail at compile
-  time (missing import) rather than silently, which is intentional.
-- **Never assume the database connection string is named `DATABASE_URL`.**
-  Depending on how a Postgres integration provisions the database, it can
-  land under `POSTGRES_PRISMA_URL`, `POSTGRES_URL`, `DATABASE_URL_UNPOOLED`,
-  or `POSTGRES_URL_NON_POOLING` instead. `packages/db/scripts/resolveDatabaseUrl.mjs`
-  is the single source of truth for checking all of them, used by both
-  build-time scripts (`packages/db/scripts/generate.mjs`,
-  `apps/web/scripts/vercel-build.mjs`) and mirrored at runtime in
-  `packages/db/src/index.ts` (passed to the `pg.Pool` that backs Prisma's
-  driver adapter, not by mutating `process.env`). Any new script that needs
-  to invoke the Prisma CLI directly must resolve the URL the same way
-  rather than reading `process.env.DATABASE_URL` directly.
-- **Seeding never runs automatically on deploy.** `apps/web/package.json`'s
-  `vercel-build` script runs `prisma migrate deploy` (safe, idempotent) but
-  deliberately not seeding — `seedDemoHousehold` (`packages/db/src/seedHousehold.ts`)
-  wipes existing households first, so it only runs on demand via
-  `POST /api/admin/seed` (token-gated by `SEED_TOKEN`). Never wire seeding
-  into a build/deploy step.
+- **Vercel was tried and deliberately abandoned. Do not reintroduce it, or
+  any packaging workaround that exists to route around its serverless
+  function packaging.** Four separate, individually-verified attempts to
+  get a Prisma-generated runtime file reliably into a deployed Vercel
+  function all failed in production despite passing every local check —
+  see `docs/deployment.md`'s "Vercel was tried and deliberately abandoned"
+  section for the summary and why that specific failure mode (opaque
+  platform-side packaging you can't fully inspect locally) is what killed
+  it. FrodoCodo now runs as a conventional Docker container on Render — a
+  long-lived process, not a serverless function, built from the root
+  `Dockerfile`. There is no `vercel.json`, no `outputFileTracingIncludes`,
+  no WASM byte-embedding, no driver-adapter Prisma mode chosen for
+  packaging reasons, no function `maxDuration`, no multi-candidate
+  `DATABASE_URL` env-var-name guessing — none of that Vercel-era
+  architecture should come back without a concrete, Render-specific reason.
+- **Prisma runs with its standard native query-engine binary — this is
+  deliberate, not an oversight.** `packages/db/prisma/schema.prisma`'s
+  generator declares `binaryTargets = ["native", "debian-openssl-3.0.x"]`
+  ("native" for local dev, "debian-openssl-3.0.x" matching the
+  Dockerfile's `node:22-bookworm-slim` base image used for both the build
+  and runtime stages), and `packages/db/src/index.ts` is a plain
+  `new PrismaClient()` reading `env("DATABASE_URL")` from the schema — no
+  driver adapter, no manual connection-string plumbing. This native-engine
+  setup is exactly what the Vercel period moved *away* from (toward
+  `@prisma/adapter-pg` + `pg`, specifically to avoid shipping this binary
+  through Vercel's unreliable packaging) and has now moved back *to*,
+  because in a Docker container the whole filesystem is something we
+  control and `COPY` ourselves — there's no packaging step for the binary
+  to go missing from. See `docs/deployment.md` for the full reasoning.
+- **The Dockerfile copies the entire built `/app` tree into the runtime
+  image, not just a trimmed `node_modules`.** This is a pnpm workspace —
+  workspace packages are symlinked into `node_modules`, with symlink
+  targets pointing at the real package directories under `packages/`/
+  `apps/`. Copying `node_modules` alone would leave those symlinks
+  dangling. `output: "standalone"` (Next.js's own file-tracing-based
+  trimming) was considered and deliberately not used, for the same reason
+  Vercel's tracer isn't trusted anymore. See `docs/deployment.md`.
+- **`apps/web/scripts/start.sh` runs `prisma migrate deploy` on every
+  container start, before the Next.js server begins accepting
+  connections, then `exec`s into `next start`.** This is safe even under
+  concurrent multi-instance startup — `migrate deploy` takes a Postgres
+  advisory lock, so a second instance just waits and then sees nothing
+  pending — and the final `exec` (rather than running `next start` via
+  `pnpm run`/`npm run`) is what lets `SIGTERM` reach the actual Node
+  process directly for a clean shutdown. See `docs/deployment.md`.
+- `packages/db/package.json`'s `"postinstall": "prisma generate"` is what
+  makes the Prisma Client exist after `pnpm install` on a machine that's
+  never run `prisma generate` manually (every CI/deploy environment,
+  including the Docker build's `deps` stage). Don't remove it. It needs no
+  database connection to succeed — only the schema, which is why the
+  Docker build stage can run it with no secrets present.
+- **The database connection string env vars are `DATABASE_URL` (pooled)
+  and `DIRECT_URL` (direct/non-pooled)** — Prisma's own first-class
+  `directUrl` datasource field (`packages/db/prisma/schema.prisma`) makes
+  every `prisma migrate` command use `DIRECT_URL` automatically instead of
+  `DATABASE_URL`, since PgBouncer's transaction pooling mode doesn't
+  support the advisory locks migrations need. Both are set directly as
+  Render environment variables — no env-var-name guessing needed, since we
+  control what Render calls them.
+- **Seeding never runs automatically on deploy or on container start.**
+  Only `apps/web/scripts/start.sh`'s `prisma migrate deploy` step runs
+  automatically (safe, idempotent) — `seedDemoHousehold`
+  (`packages/db/src/seedHousehold.ts`) wipes existing households first, so
+  it only runs on demand via `POST /api/admin/seed` (token-gated by
+  `SEED_TOKEN`). Never wire seeding into the build or startup path.
 - `packages/domain`, `packages/ledger`, `packages/providers`, `packages/ai`,
   and `packages/shared` must never import from `@frodocodo/db`, Next.js, or
   React. They're pure TypeScript, unit-tested in isolation. If a function

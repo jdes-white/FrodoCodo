@@ -179,13 +179,11 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
   log("Connecting mock institutions and syncing transactions...");
   const provider = new MockProvider();
 
-  // Neon's remote round-trip latency (unlike local Postgres) makes one
-  // DB call per transaction/merchant far too slow for Vercel's function
-  // timeout — this stage batches everything into a handful of bulk
-  // statements instead of ~450+ sequential creates/upserts (originally
-  // timed out in production at maxDuration=60 on Hobby). Provider calls
-  // stay per-institution (cheap, in-memory, no I/O); only the DB writes
-  // are batched.
+  // Neon's remote round-trip latency (unlike local Postgres) makes one DB
+  // call per transaction/merchant needlessly slow — this stage batches
+  // everything into a handful of bulk statements instead of ~450+
+  // sequential creates/upserts. Provider calls stay per-institution (cheap,
+  // in-memory, no I/O); only the DB writes are batched.
   interface RawSyncedTransaction {
     accountId: string;
     accountType: string;

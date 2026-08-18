@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "postinstall": "node scripts/generate.mjs",
+    "postinstall": "prisma generate",
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
@@ -24,15 +24,12 @@
     "@frodocodo/ledger": "workspace:*",
     "@frodocodo/providers": "workspace:*",
     "@frodocodo/shared": "workspace:*",
-    "@prisma/adapter-pg": "6.19.3",
     "@prisma/client": "6.19.3",
-    "bcryptjs": "^2.4.3",
-    "pg": "^8.23.0"
+    "bcryptjs": "^2.4.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.10.5",
-    "@types/pg": "^8.21.0",
     "prisma": "6.19.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"

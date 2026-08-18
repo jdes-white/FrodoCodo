@@ -69,6 +69,16 @@ pnpm typecheck          # every package/app
 
 See [`docs/test-strategy.md`](docs/test-strategy.md) for what's covered and why.
 
+## Deployment
+
+The app is packaged as a single Docker image (root `Dockerfile`) intended for
+Render, running as a conventional long-lived Node process against the
+existing Neon Postgres database — no serverless packaging involved. See
+[`docs/deployment.md`](docs/deployment.md) for the architecture, environment
+variables, health checks, and local Docker validation steps. An earlier
+Vercel deployment was tried and deliberately abandoned; see that doc before
+considering Vercel again.
+
 ## Financial data
 
 This repo never touches real household financial data. `packages/providers`
