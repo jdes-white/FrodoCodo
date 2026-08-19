@@ -10,6 +10,19 @@
 # declared, per the current beta's actual requirements. See
 # docs/deployment.md.
 #
+# Scoped to the immediate "get it live" milestone: the target Neon
+# database is already migrated and seeded, and apps/web/scripts/start.sh
+# does not run migrations automatically (see that script and
+# docs/deployment.md's "Migrations" section) — so DATABASE_URL is the
+# *only* value the owner has to supply by hand. AUTH_SECRET and
+# SEED_TOKEN use Render's `generateValue: true`, which has Render generate
+# a fresh, secure random value itself at first deploy; neither needs to
+# match any previously-used value for this milestone (see below for what
+# that costs). DIRECT_URL is deliberately not declared here at all — it's
+# only used by `prisma migrate` commands, never by the running app (the
+# Prisma Client at runtime reads only DATABASE_URL), so it isn't needed
+# unless/until someone runs a migration against this service by hand.
+#
 # NOTE for whoever imports this: verify the field names below against
 # Render's current Blueprint schema in their dashboard/docs at import time.
 # This file was written without live access to Render's documentation (see
@@ -32,17 +45,22 @@ services:
     # database specifically.
     healthCheckPath: /api/health
     envVars:
-      # --- Secrets: the owner must set these directly in the Render
-      # dashboard (Environment tab). `sync: false` tells Render this value
-      # is expected but not defined here — never committed.
+      # --- The one secret the owner must supply: the existing Neon
+      # pooled/runtime connection string. `sync: false` tells Render this
+      # value is expected but not defined here — never committed.
       - key: DATABASE_URL
         sync: false
-      - key: DIRECT_URL
-        sync: false
+      # --- Secrets Render generates itself at first deploy. Fresh values
+      # are fine for this milestone: AUTH_SECRET only needs to be stable
+      # *going forward* (existing sessions, all created against whatever
+      # secret Vercel used, will simply need users to log in again once —
+      # there's no stored user data that depends on its value), and
+      # SEED_TOKEN only gates the demo-reseed endpoint, which isn't being
+      # called as part of this milestone.
       - key: AUTH_SECRET
-        sync: false
+        generateValue: true
       - key: SEED_TOKEN
-        sync: false
+        generateValue: true
       # --- Non-secret configuration for the current beta ---
       - key: NODE_ENV
         value: production
@@ -51,6 +69,9 @@ services:
       - key: AI_PROVIDER
         value: stub
       # --- Not currently required — left unset intentionally ---
+      # DIRECT_URL: only needed to run `prisma migrate` commands by hand
+      #   against this service (e.g. via Render's shell) — see
+      #   docs/deployment.md's "Migrations" section.
       # BASIQ_API_KEY: only if FINANCIAL_PROVIDER=basiq (see
       #   docs/provider-integration.md before ever setting this).
       # ANTHROPIC_API_KEY / ANTHROPIC_MODEL: only if AI_PROVIDER=anthropic.

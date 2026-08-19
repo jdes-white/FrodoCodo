@@ -108,14 +108,18 @@ spec's non-negotiables — the short version is below.
   dangling. `output: "standalone"` (Next.js's own file-tracing-based
   trimming) was considered and deliberately not used, for the same reason
   Vercel's tracer isn't trusted anymore. See `docs/deployment.md`.
-- **`apps/web/scripts/start.sh` runs `prisma migrate deploy` on every
-  container start, before the Next.js server begins accepting
-  connections, then `exec`s into `next start`.** This is safe even under
-  concurrent multi-instance startup — `migrate deploy` takes a Postgres
-  advisory lock, so a second instance just waits and then sees nothing
-  pending — and the final `exec` (rather than running `next start` via
-  `pnpm run`/`npm run`) is what lets `SIGTERM` reach the actual Node
-  process directly for a clean shutdown. See `docs/deployment.md`.
+- **`apps/web/scripts/start.sh` does not run migrations.** It `exec`s
+  straight into `next start` — the final `exec` (rather than running it
+  via `pnpm run`/`npm run`) is what lets `SIGTERM` reach the actual Node
+  process directly for a clean shutdown. Migrations are applied by hand
+  (`prisma migrate deploy`, run manually against the target database) —
+  the current beta's Neon database is already migrated, so nothing runs
+  this automatically on deploy. If that ever changes, `migrate deploy` is
+  safe to wire into container start even under concurrent multi-instance
+  startup — it takes a Postgres advisory lock, so a second instance just
+  waits and then sees nothing pending — but that's a deliberate future
+  decision to make explicitly, not the current default. See
+  `docs/deployment.md`'s "Migrations" section.
 - `packages/db/package.json`'s `"postinstall": "prisma generate"` is what
   makes the Prisma Client exist after `pnpm install` on a machine that's
   never run `prisma generate` manually (every CI/deploy environment,
@@ -127,15 +131,22 @@ spec's non-negotiables — the short version is below.
   `directUrl` datasource field (`packages/db/prisma/schema.prisma`) makes
   every `prisma migrate` command use `DIRECT_URL` automatically instead of
   `DATABASE_URL`, since PgBouncer's transaction pooling mode doesn't
-  support the advisory locks migrations need. Both are set directly as
-  Render environment variables — no env-var-name guessing needed, since we
-  control what Render calls them.
-- **Seeding never runs automatically on deploy or on container start.**
-  Only `apps/web/scripts/start.sh`'s `prisma migrate deploy` step runs
-  automatically (safe, idempotent) — `seedDemoHousehold`
-  (`packages/db/src/seedHousehold.ts`) wipes existing households first, so
-  it only runs on demand via `POST /api/admin/seed` (token-gated by
-  `SEED_TOKEN`). Never wire seeding into the build or startup path.
+  support the advisory locks migrations need. `DATABASE_URL` is required
+  in every environment (the running app reads only this one). `DIRECT_URL`
+  is only read by `prisma migrate`/`introspect` CLI commands — verified
+  empirically that `PrismaClient` instantiates and queries fine with it
+  completely unset — so Render's Blueprint (`render.yaml`) doesn't declare
+  it; set it by hand only when actually running a migration against a
+  Render-hosted database.
+- **Seeding and migrations never run automatically on deploy or on
+  container start.** `apps/web/scripts/start.sh` only starts Next.js.
+  `seedDemoHousehold` (`packages/db/src/seedHousehold.ts`) wipes existing
+  households first, so it only runs on demand via `POST /api/admin/seed`
+  (token-gated by `SEED_TOKEN`). Migrations are applied by hand
+  (`prisma migrate deploy`) against whichever database needs them. Never
+  wire either into the build or startup path without a deliberate reason
+  — see `docs/deployment.md`'s "Migrations" section for the current
+  reasoning.
 - `packages/domain`, `packages/ledger`, `packages/providers`, `packages/ai`,
   and `packages/shared` must never import from `@frodocodo/db`, Next.js, or
   React. They're pure TypeScript, unit-tested in isolation. If a function

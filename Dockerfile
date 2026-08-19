@@ -76,14 +76,13 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# apps/web/scripts/start.sh applies pending migrations (prisma migrate
-# deploy — safe to run redundantly / from concurrent instances, see the
-# script's own comments) and then `exec`s into the `next` binary directly,
-# not through `pnpm run`/`npm run` — those wrap the actual server in an
-# extra shell/process layer that can swallow SIGTERM before it reaches
-# Next.js, leaving Render (or any orchestrator) waiting out the full grace
-# period for a hard SIGKILL on every deploy or restart instead of shutting
-# down promptly. next start reads the PORT env var itself; Render sets
-# PORT and this image's own ENV PORT=3000 above is the default for any
-# other Docker host.
+# apps/web/scripts/start.sh `exec`s into the `next` binary directly, not
+# through `pnpm run`/`npm run` — those wrap the actual server in an extra
+# shell/process layer that can swallow SIGTERM before it reaches Next.js,
+# leaving Render (or any orchestrator) waiting out the full grace period
+# for a hard SIGKILL on every deploy or restart instead of shutting down
+# promptly. next start reads the PORT env var itself; Render sets PORT
+# and this image's own ENV PORT=3000 above is the default for any other
+# Docker host. Deliberately does not run migrations — see the script's
+# own comments and docs/deployment.md's "Migrations" section for why.
 CMD ["./scripts/start.sh"]

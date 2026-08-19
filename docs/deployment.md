@@ -64,7 +64,7 @@ the durable summary.
 | Runtime | Long-lived Node process (`next start`) inside a Docker container, not a serverless function |
 | Prisma | Standard Prisma Client with its native query-engine binary — see "Database runtime: Prisma" below |
 | Database | Neon Postgres (unchanged), reached over a normal TCP connection |
-| Migrations | `prisma migrate deploy`, run automatically on container start — see "Migrations" below |
+| Migrations | `prisma migrate deploy`, run by hand against the target database, not automatically on container start — see "Migrations" below |
 | Hosting | Render Web Service, Docker runtime, Free plan |
 | Background worker | Not deployed (see above) |
 
@@ -85,11 +85,20 @@ strings are supplied and used:
   instead — PgBouncer's transaction pooling mode doesn't support the
   advisory locks `migrate deploy` needs. This replaced a hand-rolled
   script that guessed which of several possible env-var names Vercel's
-  Neon integration had used; Render just gets both set explicitly.
+  Neon integration had used.
 
-Both come from Neon's dashboard (or `neon.tech`'s connection-string picker,
-which offers pooled/direct variants directly) and are set as Render
-environment variables — never committed.
+For the current "get it live" milestone, **only `DATABASE_URL` is required
+on Render.** Verified empirically (see git history around this change):
+`PrismaClient` instantiates and runs queries fine with `DIRECT_URL`
+completely unset — it's read only by `prisma migrate`/`introspect` CLI
+commands, never by the running app. Since `apps/web/scripts/start.sh`
+doesn't run migrations automatically (see "Migrations" below) and the
+target Neon database is already migrated, `render.yaml` doesn't declare
+`DIRECT_URL` at all. Set it by hand — as a shell env var, not committed —
+only when actually running a migration against a Render-hosted database.
+
+Both connection strings come from Neon's dashboard (or `neon.tech`'s
+connection-string picker, which offers pooled/direct variants directly).
 
 ## Database runtime: Prisma
 
@@ -167,20 +176,27 @@ built-in `fetch`, since the slim base image has no `curl`/`wget`.
 
 ## Migrations
 
-`apps/web/scripts/start.sh` runs `prisma migrate deploy` once, synchronously,
-**before** starting the Next.js server — every time the container starts.
-This is deliberately not a separate Render pre-deploy/release-phase step:
-`prisma migrate deploy` takes a Postgres advisory lock while applying
-migrations, so it's safe to run redundantly or from multiple instances
-starting concurrently during a deploy — a second instance just waits for
-the lock and then sees "no pending migrations" rather than racing the
-first. That makes running it here safe even if this service is ever scaled
-beyond Render's free single-instance tier, without depending on a
-Render-plan-specific feature.
+`apps/web/scripts/start.sh` does **not** run migrations — it starts Next.js
+directly. For the current "get it live" milestone the target Neon database
+is already migrated (and seeded), so there's nothing pending to apply, and
+not running `migrate deploy` automatically keeps `DIRECT_URL` out of the
+set of secrets Render needs at all (see "Database (Neon)" above).
 
-Never use `prisma migrate dev` (development-only, can prompt and can be
-destructive) in this path — only `migrate deploy`, which only applies
-already-committed migration files.
+When a future schema change does need to reach this database, run
+`prisma migrate deploy` by hand against it — e.g. from a local machine with
+`DATABASE_URL`/`DIRECT_URL` pointed at the Render/Neon database, or via
+Render's own shell for the service. Never use `prisma migrate dev`
+(development-only, can prompt and can be destructive) — only
+`migrate deploy`, which only applies already-committed migration files.
+
+If this project later wants migrations to run automatically again (e.g.
+once the team is less certain every deploy's migrations were applied by
+hand), reintroducing the `prisma migrate deploy` step into `start.sh`
+before the final `exec` is safe even under concurrent multi-instance
+startup — it takes a Postgres advisory lock, so a second instance just
+waits and then sees "no pending migrations" rather than racing the first.
+That's a deliberate decision to make explicitly at that point (and would
+mean adding `DIRECT_URL` back to `render.yaml`), not the current default.
 
 ## Health checks
 
@@ -240,12 +256,12 @@ from the Vercel period. It is:
 
 ## Environment variables
 
-| Variable | Required | Notes |
+| Variable | Required on Render | Notes |
 |---|---|---|
-| `DATABASE_URL` | Yes (secret) | Neon's **pooled** connection string |
-| `DIRECT_URL` | Yes (secret) | Neon's **direct** connection string — used by `prisma migrate` only |
-| `AUTH_SECRET` | Yes (secret) | Signs the session cookie (`apps/web/lib/session.ts`). Generate with `openssl rand -base64 32` |
-| `SEED_TOKEN` | Yes (secret), to (re)seed demo data | Generate with `openssl rand -base64 24` — gates `POST /api/admin/seed` |
+| `DATABASE_URL` | **Yes (secret, owner-supplied)** | Neon's **pooled** connection string — the only value the owner has to paste in for this milestone |
+| `DIRECT_URL` | No, not declared in `render.yaml` | Only used by `prisma migrate`/`introspect` CLI commands, never by the running app. Set by hand only when running a migration against the Render-hosted database — see "Migrations" above |
+| `AUTH_SECRET` | Yes, but Render-generated | `render.yaml` uses `generateValue: true` — Render creates a fresh secure value at first deploy. Signs the session cookie (`apps/web/lib/session.ts`); a fresh value just means any pre-existing sessions need a fresh login, nothing else depends on it |
+| `SEED_TOKEN` | Yes, but Render-generated | `render.yaml` uses `generateValue: true`. Gates `POST /api/admin/seed`; a fresh value is fine since this milestone doesn't call that endpoint against the Render deployment |
 | `NODE_ENV` | No (default via Dockerfile: `production`) | |
 | `FINANCIAL_PROVIDER` | No (default `mock`) | Left as `mock` for the beta |
 | `AI_PROVIDER` | No (default `stub`) | Left as `stub` for the beta |
@@ -253,9 +269,11 @@ from the Vercel period. It is:
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Not currently required | Only if `AI_PROVIDER=anthropic` |
 | `WORKER_SYNC_INTERVAL_MINUTES` | Not currently required | Only relevant if `apps/worker` is ever deployed as its own service |
 
-`render.yaml` declares all of these; the four secrets are marked
-`sync: false` (Render prompts for them in the dashboard, nothing is
-committed).
+`render.yaml` declares all of the Render-relevant rows above. Only
+`DATABASE_URL` is marked `sync: false` (Render prompts for it in the
+dashboard; nothing is committed) — `AUTH_SECRET` and `SEED_TOKEN` use
+`generateValue: true` instead, so the owner never has to source or paste
+those two at all.
 
 ## Render deployment
 
@@ -315,11 +333,15 @@ deploy:
 docker build -t frodocodo .
 docker run --rm -p 3000:3000 \
   -e DATABASE_URL="postgresql://frodocodo:frodocodo@host.docker.internal:5432/frodocodo?schema=public" \
-  -e DIRECT_URL="postgresql://frodocodo:frodocodo@host.docker.internal:5432/frodocodo?schema=public" \
   -e AUTH_SECRET="$(openssl rand -base64 32)" \
   -e SEED_TOKEN="local-test-token" \
   frodocodo
 ```
+
+(`DIRECT_URL` is deliberately omitted here too — matching what Render
+actually sets. The container never uses it, since `start.sh` doesn't run
+migrations; run the local Postgres's own `prisma migrate deploy` by hand,
+outside the container, if you need to apply migrations locally.)
 
 Then, against `http://localhost:3000`: `GET /api/health` and
 `GET /api/health/db` both return `{"ok":true}`; `POST /api/admin/seed`
