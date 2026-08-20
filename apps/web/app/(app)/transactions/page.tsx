@@ -3,6 +3,7 @@ import { listTransactions } from "@/lib/transactions";
 import { listCategoriesWithBuckets, listAccounts } from "@/lib/categories";
 import { TransactionList } from "@/components/TransactionList";
 import { TransactionFiltersForm } from "@/components/TransactionFiltersForm";
+import { PageHeader } from "@/components/PageHeader";
 
 interface SearchParams {
   categoryId?: string;
@@ -29,7 +30,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
 
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-lg font-semibold">Transactions</h1>
+      <PageHeader title="Transactions" />
       <TransactionFiltersForm categories={categories} accounts={accounts} current={params} />
       <TransactionList transactions={transactions} />
     </div>

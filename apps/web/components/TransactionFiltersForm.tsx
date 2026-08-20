@@ -1,3 +1,5 @@
+import { Card } from "./Card";
+
 interface CategoryOption {
   id: string;
   name: string;
@@ -19,11 +21,7 @@ export function TransactionFiltersForm({
   current: { categoryId?: string; accountId?: string; merchantQuery?: string; needsReviewOnly?: string };
 }) {
   return (
-    <form
-      method="get"
-      className="flex flex-wrap items-end gap-2 rounded-2xl border p-3"
-      style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-    >
+    <Card as="form" method="get" padding="p-3" className="flex flex-wrap items-end gap-2">
       <div className="flex flex-col gap-1">
         <label className="text-xs" style={{ color: "var(--color-text-muted)" }}>
           Merchant
@@ -78,11 +76,11 @@ export function TransactionFiltersForm({
       </label>
       <button
         type="submit"
-        className="rounded-lg px-3 py-1.5 text-sm font-medium text-white"
+        className="rounded-lg px-3 py-1.5 text-sm font-semibold text-white"
         style={{ background: "var(--color-accent)" }}
       >
         Filter
       </button>
-    </form>
+    </Card>
   );
 }

@@ -3,6 +3,8 @@ import { requireSession } from "@/lib/session";
 import { prisma } from "@frodocodo/db";
 import { fromPrismaDecimal } from "@/lib/decimal";
 import { setAccountIncluded, disconnectInstitution } from "./actions";
+import { Card } from "@/components/Card";
+import { PageHeader } from "@/components/PageHeader";
 
 export default async function SettingsPage() {
   const session = await requireSession();
@@ -19,7 +21,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-lg font-semibold">Settings</h1>
+      <PageHeader title="Settings" />
 
       <Section title="Household">
         <Row label="Name" value={household.name} />
@@ -102,13 +104,10 @@ export default async function SettingsPage() {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section
-      className="flex flex-col gap-2 rounded-2xl border p-5"
-      style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-    >
+    <Card as="section" className="flex flex-col gap-2">
       <h2 className="text-sm font-medium">{title}</h2>
       {children}
-    </section>
+    </Card>
   );
 }
 

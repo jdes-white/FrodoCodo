@@ -1,36 +1,120 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens (visual reference: purple-accented, card-based design with
+ * a circular hero progress ring on the dashboard, adapted rather than
+ * copied verbatim — see docs/architecture.md / CLAUDE.md for the product
+ * principles this still has to respect). Two token groups:
+ *
+ *  - --color-* / --cat-*: the actual design system (surfaces, text, the
+ *    purple brand accent, and an 8-color category/bucket accent palette
+ *    used by lib/categoryVisuals.ts for icon badges and progress fills).
+ *  - --status-*: semantic pacing colors (ahead/on-track/behind). Kept
+ *    deliberately separate from --color-accent — pacing status is
+ *    information the household relies on at a glance, so its color
+ *    can't just become "whatever the brand accent is this season."
+ *
+ * No manual theme toggle exists in this app, so dark mode is driven
+ * purely by `prefers-color-scheme`, matching the device/system setting
+ * automatically.
+ */
+
 :root {
-  --color-bg: #f7f7f5;
+  --color-bg: #f8f7fc;
   --color-surface: #ffffff;
-  --color-border: #e6e4df;
-  --color-text: #1f1d1a;
-  --color-text-muted: #6b6862;
-  --color-accent: #2f6f5e;
-  --color-accent-soft: #e3efeb;
-  --status-ahead: #2f6f5e;
-  --status-ahead-soft: #e3efeb;
-  --status-on-track: #4f6f8f;
-  --status-on-track-soft: #e6edf3;
-  --status-behind: #b5651d;
-  --status-behind-soft: #f6ead9;
+  --color-border: #e9e5f5;
+  --color-text: #1c1730;
+  --color-text-muted: #786f92;
+
+  --color-accent: #7c5cfc;
+  --color-accent-strong: #5b3fc4;
+  --color-accent-soft: #efeafc;
+
+  --status-ahead: #21966b;
+  --status-ahead-soft: #e3f6ec;
+  --status-on-track: #4a6fd1;
+  --status-on-track-soft: #e9edfb;
+  --status-behind: #c96a1c;
+  --status-behind-soft: #faead9;
+
+  --cat-1: #ea8c14;
+  --cat-1-soft: #fdedd3;
+  --cat-2: #0f9c8c;
+  --cat-2-soft: #dcf3ef;
+  --cat-3: #e34f83;
+  --cat-3-soft: #fbe4ec;
+  --cat-4: #8b5cf6;
+  --cat-4-soft: #efeafc;
+  --cat-5: #3b7ff0;
+  --cat-5-soft: #e3edfd;
+  --cat-6: #29a865;
+  --cat-6-soft: #dff5e8;
+  --cat-7: #6366f1;
+  --cat-7-soft: #e6e6fd;
+  --cat-8: #d6469a;
+  --cat-8-soft: #fbe3f1;
+
+  --shadow-card: 0 1px 2px rgba(28, 23, 48, 0.04), 0 10px 24px -14px rgba(28, 23, 48, 0.16);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #15140f;
-    --color-surface: #1e1c17;
-    --color-border: #322f27;
-    --color-text: #f2f0ea;
-    --color-text-muted: #a5a196;
-    --color-accent: #6fbfa2;
-    --color-accent-soft: #22352f;
-    --status-ahead: #6fbfa2;
-    --status-ahead-soft: #1c3129;
-    --status-on-track: #8fb0d1;
-    --status-on-track-soft: #1f2b36;
-    --status-behind: #e0a256;
-    --status-behind-soft: #3a2c19;
+    --color-bg: #100c1c;
+    --color-surface: #1c1730;
+    --color-border: #322a4d;
+    --color-text: #f3f1fa;
+    --color-text-muted: #a199b8;
+
+    --color-accent: #9b7dff;
+    --color-accent-strong: #7c5cfc;
+    --color-accent-soft: #29234a;
+
+    --status-ahead: #4bd08d;
+    --status-ahead-soft: #163828;
+    --status-on-track: #85a6f5;
+    --status-on-track-soft: #1d2748;
+    --status-behind: #f0a24e;
+    --status-behind-soft: #3b2a16;
+
+    --cat-1: #f5a83e;
+    --cat-1-soft: #3a2b12;
+    --cat-2: #2bcab6;
+    --cat-2-soft: #123531;
+    --cat-3: #f0709f;
+    --cat-3-soft: #3a1f2c;
+    --cat-4: #a78bfa;
+    --cat-4-soft: #29234a;
+    --cat-5: #6ea1f7;
+    --cat-5-soft: #1c2a4a;
+    --cat-6: #4ecb8a;
+    --cat-6-soft: #163828;
+    --cat-7: #8789f7;
+    --cat-7-soft: #262358;
+    --cat-8: #ec7ec0;
+    --cat-8-soft: #3a1f36;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 24px -14px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/*
+ * Home hero backdrop: evokes the reference's dawn/dusk sky behind the
+ * progress ring using CSS gradients rather than an embedded photo/
+ * illustration asset — scales to any viewport for free, adds no image
+ * weight, and swaps cleanly between light (warm dawn) and dark (night
+ * sky) instead of needing two separate image files.
+ */
+.hero-sky {
+  background:
+    radial-gradient(120% 90% at 80% -10%, rgba(255, 205, 150, 0.55) 0%, rgba(255, 205, 150, 0) 55%),
+    linear-gradient(165deg, #cdbdf2 0%, #e9c9e6 45%, #fbe0c9 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .hero-sky {
+    background:
+      radial-gradient(120% 90% at 80% -10%, rgba(155, 125, 255, 0.35) 0%, rgba(155, 125, 255, 0) 55%),
+      linear-gradient(165deg, #1c1533 0%, #241a3f 50%, #150f28 100%);
   }
 }
 

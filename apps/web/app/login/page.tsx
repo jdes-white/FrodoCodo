@@ -9,7 +9,7 @@ export default async function LoginPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6 py-12">
       <div className="mb-8 text-center">
-        <h1 className="text-2xl font-semibold" style={{ color: "var(--color-text)" }}>
+        <h1 className="text-3xl font-extrabold" style={{ color: "var(--color-accent)" }}>
           FrodoCodo
         </h1>
         <p className="mt-1 text-sm" style={{ color: "var(--color-text-muted)" }}>

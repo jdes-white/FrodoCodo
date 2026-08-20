@@ -3,6 +3,8 @@ import { requireSession } from "@/lib/session";
 import { getBudgetSnapshot } from "@/lib/budgetSnapshot";
 import { updateAllocations } from "./actions";
 import { ScenarioModeller } from "./ScenarioModeller";
+import { Card } from "@/components/Card";
+import { PageHeader } from "@/components/PageHeader";
 
 export default async function PlanPage() {
   const session = await requireSession();
@@ -15,12 +17,9 @@ export default async function PlanPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-lg font-semibold">Plan</h1>
+      <PageHeader title="Plan" />
 
-      <section
-        className="rounded-2xl border p-5"
-        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-      >
+      <Card as="section">
         <h2 className="mb-3 text-sm font-medium">This period&apos;s budget</h2>
         <form action={updateAllocations} className="flex flex-col gap-3">
           <input type="hidden" name="budgetPeriodId" value={snapshot.budgetPeriodId} />
@@ -64,18 +63,15 @@ export default async function PlanPage() {
             </button>
           )}
         </form>
-      </section>
+      </Card>
 
-      <section
-        className="rounded-2xl border p-5"
-        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-      >
+      <Card as="section">
         <h2 className="mb-1 text-sm font-medium">What if?</h2>
         <p className="mb-3 text-xs" style={{ color: "var(--color-text-muted)" }}>
           Model a change before committing to it. Nothing here is saved until you update the budget above.
         </p>
         <ScenarioModeller categories={allCategories.map((c) => ({ ...c, allocation: c.allocation.toNumber() }))} />
-      </section>
+      </Card>
     </div>
   );
 }

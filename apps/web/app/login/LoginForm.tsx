@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { loginAction, type LoginState } from "./actions";
+import { Card } from "@/components/Card";
 
 const initialState: LoginState = {};
 
@@ -9,11 +10,7 @@ export function LoginForm() {
   const [state, formAction, isPending] = useActionState(loginAction, initialState);
 
   return (
-    <form
-      action={formAction}
-      className="flex flex-col gap-4 rounded-2xl border p-6"
-      style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-    >
+    <Card as="form" action={formAction} className="flex flex-col gap-4 rounded-3xl">
       <div className="flex flex-col gap-1">
         <label htmlFor="email" className="text-sm font-medium">
           Email
@@ -24,7 +21,7 @@ export function LoginForm() {
           type="email"
           required
           autoComplete="email"
-          className="rounded-lg border px-3 py-2 text-sm outline-none"
+          className="rounded-xl border px-3 py-2 text-sm outline-none"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
       </div>
@@ -38,7 +35,7 @@ export function LoginForm() {
           type="password"
           required
           autoComplete="current-password"
-          className="rounded-lg border px-3 py-2 text-sm outline-none"
+          className="rounded-xl border px-3 py-2 text-sm outline-none"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
       </div>
@@ -50,11 +47,11 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={isPending}
-        className="mt-2 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+        className="mt-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
         style={{ background: "var(--color-accent)" }}
       >
         {isPending ? "Signing in..." : "Sign in"}
       </button>
-    </form>
+    </Card>
   );
 }

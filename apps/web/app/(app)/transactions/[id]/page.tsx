@@ -6,6 +6,8 @@ import { getTransactionDetail } from "@/lib/transactions";
 import { listCategoriesWithBuckets } from "@/lib/categories";
 import { fromPrismaDecimal } from "@/lib/decimal";
 import { reclassifyTransaction, setExcludedFromBudget, markAsTransfer, updateNotes } from "./actions";
+import { Card } from "@/components/Card";
+import { CategoryIcon } from "@/components/CategoryIcon";
 
 export default async function TransactionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,17 +25,19 @@ export default async function TransactionDetailPage({ params }: { params: Promis
         ← Back to transactions
       </Link>
 
-      <section
-        className="rounded-2xl border p-5"
-        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-      >
-        <p className="text-2xl font-semibold">
-          {transaction.direction === "CREDIT" ? "+" : "-"}
-          {formatAUD(fromPrismaDecimal(transaction.amount))}
-        </p>
-        <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
-          {transaction.merchant?.normalizedName ?? "Unrecognized merchant"}
-        </p>
+      <Card as="section" className="rounded-3xl">
+        <div className="flex items-center gap-3">
+          <CategoryIcon name={transaction.category?.name ?? "Uncategorized"} size={40} />
+          <div>
+            <p className="text-2xl font-semibold">
+              {transaction.direction === "CREDIT" ? "+" : "-"}
+              {formatAUD(fromPrismaDecimal(transaction.amount))}
+            </p>
+            <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+              {transaction.merchant?.normalizedName ?? "Unrecognized merchant"}
+            </p>
+          </div>
+        </div>
 
         <dl className="mt-4 grid grid-cols-2 gap-y-2 text-sm">
           <dt style={{ color: "var(--color-text-muted)" }}>Original description</dt>
@@ -53,12 +57,9 @@ export default async function TransactionDetailPage({ params }: { params: Promis
             </>
           )}
         </dl>
-      </section>
+      </Card>
 
-      <section
-        className="rounded-2xl border p-5"
-        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-      >
+      <Card as="section">
         <h2 className="mb-3 text-sm font-medium">Reclassify</h2>
         <form action={reclassifyTransaction} className="flex flex-col gap-3">
           <input type="hidden" name="transactionId" value={transaction.id} />
@@ -92,12 +93,9 @@ export default async function TransactionDetailPage({ params }: { params: Promis
             Save
           </button>
         </form>
-      </section>
+      </Card>
 
-      <section
-        className="flex flex-wrap gap-2 rounded-2xl border p-5"
-        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-      >
+      <Card as="section" className="flex flex-wrap gap-2">
         <form action={markAsTransfer}>
           <input type="hidden" name="transactionId" value={transaction.id} />
           <button type="submit" className="rounded-lg border px-3 py-1.5 text-sm" style={{ borderColor: "var(--color-border)" }}>
@@ -111,12 +109,9 @@ export default async function TransactionDetailPage({ params }: { params: Promis
             {transaction.isExcludedFromBudget ? "Include in budget" : "Exclude from budget"}
           </button>
         </form>
-      </section>
+      </Card>
 
-      <section
-        className="rounded-2xl border p-5"
-        style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
-      >
+      <Card as="section">
         <h2 className="mb-3 text-sm font-medium">Notes</h2>
         <form action={updateNotes} className="flex flex-col gap-2">
           <input type="hidden" name="transactionId" value={transaction.id} />
@@ -135,7 +130,7 @@ export default async function TransactionDetailPage({ params }: { params: Promis
             Save notes
           </button>
         </form>
-      </section>
+      </Card>
     </div>
   );
 }
