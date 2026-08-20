@@ -45,9 +45,5 @@ function buildTemplateNarrative(request: IntelligenceRequest): string {
     lines.push(`If current spending continues, the data shows a projected period-end position of ${totals.projectedEndOfPeriod}.`);
   }
 
-  if (request.type === "ANSWER_QUESTION" && request.question) {
-    lines.unshift(`Regarding "${request.question}":`);
-  }
-
   return lines.join(" ");
 }

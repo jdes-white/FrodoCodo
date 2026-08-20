@@ -46,4 +46,34 @@ describe("applyScenario", () => {
     const groceries = result.lines.find((l) => l.categoryId === "groceries")!;
     expect(groceries.delta.toNumber()).toBe(0);
   });
+
+  it("increases a category by a fixed amount", () => {
+    const result = applyScenario(baseline, [
+      { categoryId: "dining", label: "More dining", type: "INCREASE_BY_AMOUNT", value: toMoney(100) },
+    ]);
+    const dining = result.lines.find((l) => l.categoryId === "dining")!;
+    expect(dining.adjustedAllocation.toNumber()).toBe(500);
+    expect(dining.delta.toNumber()).toBe(100);
+    // Increasing spends more of the budget, so netChange (original - adjusted) goes negative.
+    expect(result.netChange.toNumber()).toBe(-100);
+  });
+
+  it("increases a category by a percentage", () => {
+    const result = applyScenario(baseline, [
+      { categoryId: "groceries", label: "More groceries 10%", type: "INCREASE_BY_PERCENT", value: 10 },
+    ]);
+    const groceries = result.lines.find((l) => l.categoryId === "groceries")!;
+    expect(groceries.adjustedAllocation.toNumber()).toBe(880);
+    expect(result.netChange.toNumber()).toBe(-80);
+  });
+
+  it("combines a reduction and an increase, netting their effect on the total", () => {
+    const result = applyScenario(baseline, [
+      { categoryId: "subscriptions", label: "Cancel subscription", type: "REMOVE", value: 0 },
+      { categoryId: "groceries", label: "More groceries", type: "INCREASE_BY_AMOUNT", value: toMoney(60) },
+    ]);
+    expect(result.netChange.toNumber()).toBe(0);
+    const groceries = result.lines.find((l) => l.categoryId === "groceries")!;
+    expect(groceries.adjustedAllocation.toNumber()).toBe(860);
+  });
 });

@@ -64,4 +64,10 @@ describe("FinancialIntelligenceService", () => {
     expect(result.narrative.length).toBeGreaterThan(0);
     expect(["AI", "FALLBACK_TEMPLATE"]).toContain(result.source);
   });
+
+  it("answers a question with the answer itself, not a 'Regarding \"...\":' preamble", async () => {
+    const service = new FinancialIntelligenceService(new StubGateway());
+    const result = await service.respond(makeRequest({ type: "ANSWER_QUESTION", question: "Why are we behind on Lifestyle?" }));
+    expect(result.narrative.startsWith("Regarding")).toBe(false);
+  });
 });

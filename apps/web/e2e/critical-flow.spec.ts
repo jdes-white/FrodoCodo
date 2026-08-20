@@ -66,4 +66,27 @@ test("insights page answers a question about the budget without leaving the app"
   await page.getByRole("button", { name: "Ask" }).click();
 
   await expect(page.locator("text=remaining out of")).toBeVisible({ timeout: 10_000 });
+  // The answer should open with the answer itself, not a "Regarding ...:" preamble.
+  await expect(page.locator('text=/^Regarding "/')).toHaveCount(0);
+});
+
+test("Plan's What If tool can model both a reduction and an increase, from live budget categories", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(ADMIN_EMAIL);
+  await page.getByLabel("Password").fill(ADMIN_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL("/");
+
+  await page.goto("/plan");
+
+  // The category dropdown is populated from this period's real budget categories,
+  // not a hard-coded list — it must have at least one real option.
+  const categorySelect = page.locator('section:has-text("What if?") select');
+  const categoryOptions = await categorySelect.locator("option").all();
+  expect(categoryOptions.length).toBeGreaterThan(0);
+
+  // Default is Reduce; switching to Increase changes the resulting copy.
+  await expect(page.getByText("freeing up")).toBeVisible();
+  await page.getByRole("button", { name: "Increase" }).click();
+  await expect(page.getByText("using an extra")).toBeVisible();
 });

@@ -42,6 +42,12 @@ html,
 body {
   padding: 0;
   margin: 0;
+  /* Belt-and-braces alongside the viewport meta config (app/layout.tsx):
+     nothing in this app's layout is expected to exceed the viewport
+     width, but this guarantees an errant wide child (e.g. unbroken long
+     text) clips instead of introducing sideways panning. */
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 body {

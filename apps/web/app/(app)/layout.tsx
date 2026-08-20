@@ -15,17 +15,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <NavBar />
       <div className="flex-1 pb-20 sm:pb-0">
         <header
-          className="flex items-center justify-between border-b px-4 py-3 sm:px-6"
+          className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-6"
           style={{ borderColor: "var(--color-border)" }}
         >
-          <div>
-            <p className="text-sm font-semibold">{household.name}</p>
-            <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{household.name}</p>
+            <p className="truncate text-xs" style={{ color: "var(--color-text-muted)" }}>
               {user.name}
               {session.role === "ADMIN" ? " · Admin" : ""}
             </p>
           </div>
-          <form action={logoutAction}>
+          <form action={logoutAction} className="shrink-0">
             <button type="submit" className="text-xs" style={{ color: "var(--color-text-muted)" }}>
               Sign out
             </button>

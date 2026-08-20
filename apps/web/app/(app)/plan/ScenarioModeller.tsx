@@ -17,30 +17,48 @@ interface CategoryOption {
  * instant "what if" preview (§27). The AI layer never computes this; it can
  * only narrate a result already produced here.
  */
+type Direction = "REDUCE" | "INCREASE";
+
 export function ScenarioModeller({ categories }: { categories: CategoryOption[] }) {
   const [categoryId, setCategoryId] = useState(categories[0]?.categoryId ?? "");
-  const [reductionPercent, setReductionPercent] = useState(10);
+  const [direction, setDirection] = useState<Direction>("REDUCE");
+  const [percent, setPercent] = useState(10);
 
   const result = useMemo(() => {
     if (!categoryId) return null;
     const adjustment: ScenarioAdjustment = {
       categoryId,
       label: "Scenario",
-      type: "REDUCE_BY_PERCENT",
-      value: reductionPercent,
+      type: direction === "REDUCE" ? "REDUCE_BY_PERCENT" : "INCREASE_BY_PERCENT",
+      value: percent,
     };
     return applyScenario(
       categories.map((c) => ({ categoryId: c.categoryId, categoryName: c.name, allocation: toMoney(c.allocation) })),
       [adjustment],
     );
-  }, [categoryId, reductionPercent, categories]);
+  }, [categoryId, direction, percent, categories]);
 
   const affected = result?.lines.find((l) => l.categoryId === categoryId);
 
   return (
     <div className="flex flex-col gap-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <span>Reduce</span>
+        <div className="inline-flex overflow-hidden rounded-lg border" style={{ borderColor: "var(--color-border)" }}>
+          {(["REDUCE", "INCREASE"] as const).map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDirection(d)}
+              className="px-2.5 py-1 text-sm"
+              style={{
+                background: direction === d ? "var(--color-accent-soft)" : "transparent",
+                color: direction === d ? "var(--color-accent)" : "var(--color-text-muted)",
+              }}
+            >
+              {d === "REDUCE" ? "Reduce" : "Increase"}
+            </button>
+          ))}
+        </div>
         <select
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
@@ -58,8 +76,8 @@ export function ScenarioModeller({ categories }: { categories: CategoryOption[] 
           type="number"
           min={0}
           max={100}
-          value={reductionPercent}
-          onChange={(e) => setReductionPercent(Number(e.target.value))}
+          value={percent}
+          onChange={(e) => setPercent(Number(e.target.value))}
           className="w-16 rounded-lg border px-2 py-1"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
@@ -69,7 +87,9 @@ export function ScenarioModeller({ categories }: { categories: CategoryOption[] 
       {affected && result && (
         <p className="rounded-xl p-3" style={{ background: "var(--color-accent-soft)" }}>
           {affected.categoryName} would go from {formatAUD(affected.allocation)} to {formatAUD(affected.adjustedAllocation)},
-          freeing up {formatAUD(result.netChange)} for savings or buffer.
+          {result.netChange.greaterThanOrEqualTo(0)
+            ? ` freeing up ${formatAUD(result.netChange)} for savings or buffer.`
+            : ` using an extra ${formatAUD(result.netChange.abs())} from elsewhere in the budget.`}
         </p>
       )}
     </div>

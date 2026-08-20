@@ -8,6 +8,8 @@ import { toMoney, ZERO, sumMoney, type Money } from "@frodocodo/shared";
 export type ScenarioAdjustmentType =
   | "REDUCE_BY_AMOUNT"
   | "REDUCE_BY_PERCENT"
+  | "INCREASE_BY_AMOUNT"
+  | "INCREASE_BY_PERCENT"
   | "SET_ALLOCATION"
   | "REMOVE";
 
@@ -75,6 +77,10 @@ function applyAdjustment(allocation: Money, adjustment: ScenarioAdjustment): Mon
       return allocation.minus(toMoney(adjustment.value as Money));
     case "REDUCE_BY_PERCENT":
       return allocation.times(1 - (adjustment.value as number) / 100);
+    case "INCREASE_BY_AMOUNT":
+      return allocation.plus(toMoney(adjustment.value as Money));
+    case "INCREASE_BY_PERCENT":
+      return allocation.times(1 + (adjustment.value as number) / 100);
     case "SET_ALLOCATION":
       return toMoney(adjustment.value as Money);
     case "REMOVE":
