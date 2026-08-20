@@ -17,7 +17,7 @@ export function ProgressRing({ percent, colorVar, children }: { percent: number;
   const offset = CIRCUMFERENCE * (1 - clamped / 100);
 
   return (
-    <div className="relative mx-auto aspect-square" style={{ width: "clamp(200px, 62vw, 260px)" }}>
+    <div className="relative mx-auto aspect-square" style={{ width: "clamp(165px, 56vw, 230px)" }}>
       <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="h-full w-full -rotate-90">
         <circle cx={SIZE / 2} cy={SIZE / 2} r={RADIUS} fill="none" stroke="var(--color-border)" strokeWidth={STROKE_WIDTH} opacity={0.6} />
         <circle

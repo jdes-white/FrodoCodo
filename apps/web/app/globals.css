@@ -36,6 +36,25 @@
   --status-on-track-soft: #e9edfb;
   --status-behind: #c96a1c;
   --status-behind-soft: #faead9;
+  --status-off-track: #d6473f;
+  --status-off-track-soft: #fce3e1;
+
+  /* Fixed layout metrics (not colors) so Home's paginated panels can size
+     themselves to exactly fill the viewport between the app header and the
+     bottom nav via calc(100dvh - ...) — see components/HomePager.tsx. Both
+     the header ((app)/layout.tsx) and NavBar's mobile bar are given
+     matching explicit heights so this arithmetic is reliable rather than
+     guessing at intrinsic content height. */
+  --app-header-h: 64px;
+  --app-nav-h: calc(56px + env(safe-area-inset-bottom));
+  /* Everything besides header/nav that eats into document height on mobile
+     before Home's paginated panels start: <main>'s own py-6 (3rem total)
+     plus the app shell's pb-20 (5rem) reserved so normal pages' last
+     content clears the fixed nav. Home folds all of it into its panels'
+     height calc directly (see components/HomePager.tsx) instead of fighting
+     it with negative margins, so the panels are the *only* scrollable
+     region on that page — the surrounding document never scrolls too. */
+  --app-chrome-h: calc(var(--app-header-h) + var(--app-nav-h) + 8rem);
 
   --cat-1: #ea8c14;
   --cat-1-soft: #fdedd3;
@@ -75,6 +94,8 @@
     --status-on-track-soft: #1d2748;
     --status-behind: #f0a24e;
     --status-behind-soft: #3b2a16;
+    --status-off-track: #f26860;
+    --status-off-track-soft: #3a1a18;
 
     --cat-1: #f5a83e;
     --cat-1-soft: #3a2b12;

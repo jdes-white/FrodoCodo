@@ -16,6 +16,22 @@ export interface PacingInput {
   trailingWindowDays?: number;
   /** Fraction of allocation within which spend-vs-expected is considered "on track" (default 5%). */
   varianceThresholdRatio?: number;
+  /**
+   * When provided, used as expectedSpendToDate directly instead of deriving
+   * it from spendingType/fixedDueDayOfMonth. This is how an aggregate
+   * (a bucket, or the household total) gets a recurring-aware expected
+   * baseline: sum each child category's own already-correctly-modeled
+   * expectedSpendToDate (linear for FLEXIBLE, step-at-due-date for
+   * FIXED_COMMITMENT) rather than re-deriving a single flat linear
+   * expectation from the combined allocation — which would wrongly treat a
+   * lump-sum fixed commitment (e.g. a mortgage due on day 3) as smeared
+   * evenly across the whole period, and flag the aggregate as overspending
+   * the moment it posts. Later pacing stages (recognizing recurring
+   * transactions by pattern, confidence-based forecasting) plug in here
+   * too, by supplying a smarter override — this function's variance/status
+   * math never has to change for that.
+   */
+  expectedSpendToDateOverride?: MoneyInput;
 }
 
 export interface PacingResult {
@@ -54,9 +70,11 @@ export function calculatePacing(input: PacingInput): PacingResult {
   const percentPeriodElapsed = totalDays === 0 ? 100 : (daysElapsed / totalDays) * 100;
 
   const expectedSpendToDate =
-    spendingType === "FIXED_COMMITMENT" && input.fixedDueDayOfMonth
-      ? fixedCommitmentExpectedSpend(period, asOf, input.fixedDueDayOfMonth, allocation)
-      : allocation.times(daysElapsed).dividedBy(totalDays || 1);
+    input.expectedSpendToDateOverride !== undefined
+      ? toMoney(input.expectedSpendToDateOverride)
+      : spendingType === "FIXED_COMMITMENT" && input.fixedDueDayOfMonth
+        ? fixedCommitmentExpectedSpend(period, asOf, input.fixedDueDayOfMonth, allocation)
+        : allocation.times(daysElapsed).dividedBy(totalDays || 1);
 
   const variance = spentToDate.minus(expectedSpendToDate);
 

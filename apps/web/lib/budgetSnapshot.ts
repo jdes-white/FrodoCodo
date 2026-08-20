@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@frodocodo/db";
-import { toMoney, sumMoney, addDays, todayUTC, type Money } from "@frodocodo/shared";
+import { toMoney, sumMoney, percentage, addDays, todayUTC, type Money, type SpendingType } from "@frodocodo/shared";
 import { resolveBudgetPeriod, calculatePacing, type PacingResult, type BudgetPeriodBounds } from "@frodocodo/domain";
 import { fromPrismaDecimal } from "./decimal";
 
@@ -8,7 +8,14 @@ export interface CategorySnapshot {
   categoryId: string;
   name: string;
   bucketId: string;
+  spendingType: SpendingType;
   pacing: PacingResult;
+}
+
+export interface FlexibleBudgetSnapshot {
+  allocation: Money;
+  spentToDate: Money;
+  percentConsumed: number;
 }
 
 export interface BucketSnapshot {
@@ -24,6 +31,10 @@ export interface BudgetSnapshot {
   budgetPeriodId: string;
   asOf: string;
   totalPacing: PacingResult;
+  /** Same period, but scoped to FLEXIBLE-spendingType categories only — fixed
+   * commitments and savings transfers excluded, since neither is "spending"
+   * in the variable/discretionary sense a pace explanation is talking about. */
+  flexibleBudget: FlexibleBudgetSnapshot;
   buckets: BucketSnapshot[];
   lastSyncedAt: Date | null;
   staleSyncAccountNames: string[];
@@ -93,6 +104,7 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
       categoryId: category.id,
       name: category.name,
       bucketId: bucket.id,
+      spendingType: category.spendingType,
       pacing,
     };
 
@@ -117,6 +129,14 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
       const totalTrailing = sumMoney(
         bucket.categories.map((c) => c.pacing.spendVelocityPerDay.times(TRAILING_WINDOW_DAYS)),
       );
+      // Recurring-aware aggregation (pacing Stage 2, see PacingInput's
+      // expectedSpendToDateOverride doc comment): sum each category's own
+      // already-correct expected-to-date (step-at-due-date for a fixed
+      // commitment, linear for flexible spend) instead of re-deriving one
+      // flat linear expectation from the bucket's combined allocation. A
+      // bucket containing a mortgage due on day 3 would otherwise look like
+      // it's wildly overspending the moment that single payment posts.
+      const expectedSpendToDateOverride = sumMoney(bucket.categories.map((c) => c.pacing.expectedSpendToDate));
       const pacing = calculatePacing({
         period,
         asOf,
@@ -124,6 +144,7 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
         spentToDate: totalSpent,
         trailingSpend: totalTrailing,
         trailingWindowDays: TRAILING_WINDOW_DAYS,
+        expectedSpendToDateOverride,
       });
       return { ...bucket, pacing };
     })
@@ -132,6 +153,7 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
   const totalAllocation = sumMoney(buckets.map((b) => b.pacing.allocation));
   const totalSpent = sumMoney(buckets.map((b) => b.pacing.spentToDate));
   const totalTrailing = sumMoney(buckets.map((b) => b.pacing.spendVelocityPerDay.times(TRAILING_WINDOW_DAYS)));
+  const totalExpectedSpendToDateOverride = sumMoney(buckets.map((b) => b.pacing.expectedSpendToDate));
   const totalPacing = calculatePacing({
     period,
     asOf,
@@ -139,7 +161,17 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
     spentToDate: totalSpent,
     trailingSpend: totalTrailing,
     trailingWindowDays: TRAILING_WINDOW_DAYS,
+    expectedSpendToDateOverride: totalExpectedSpendToDateOverride,
   });
+
+  const flexibleCategories = [...bucketMap.values()].flatMap((b) => b.categories).filter((c) => c.spendingType === "FLEXIBLE");
+  const flexibleAllocation = sumMoney(flexibleCategories.map((c) => c.pacing.allocation));
+  const flexibleSpent = sumMoney(flexibleCategories.map((c) => c.pacing.spentToDate));
+  const flexibleBudget: FlexibleBudgetSnapshot = {
+    allocation: flexibleAllocation,
+    spentToDate: flexibleSpent,
+    percentConsumed: percentage(flexibleSpent, flexibleAllocation),
+  };
 
   const lastSyncedAt = accounts.reduce<Date | null>((latest, a) => {
     if (!a.lastSyncedAt) return latest;
@@ -152,7 +184,7 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
     .filter((a) => !a.lastSyncedAt || a.lastSyncedAt < staleCutoff)
     .map((a) => a.displayName);
 
-  return { period, budgetPeriodId: budgetPeriod.id, asOf, totalPacing, buckets, lastSyncedAt, staleSyncAccountNames };
+  return { period, budgetPeriodId: budgetPeriod.id, asOf, totalPacing, flexibleBudget, buckets, lastSyncedAt, staleSyncAccountNames };
 }
 
 /** Nets DEBIT spend against CREDIT (refunds) per category, excluding transfers and excluded transactions (§39). */

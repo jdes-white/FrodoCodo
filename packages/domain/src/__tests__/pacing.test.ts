@@ -120,3 +120,84 @@ describe("calculatePacing — fixed commitments", () => {
     expect(result.projectedVariance.toNumber()).toBe(150);
   });
 });
+
+describe("calculatePacing — expectedSpendToDateOverride (aggregation, pacing Stage 2)", () => {
+  it("without an override, an aggregate containing a lump-sum fixed commitment wrongly looks like it's overspending the moment the bill posts", () => {
+    // A bucket combining a $2400 mortgage (due day 3) and $900 flexible
+    // groceries, $3300 total. On day 3, only the mortgage has posted
+    // ($2400 spent) — early in the month, so naive linear expected-to-date
+    // for the WHOLE bucket is tiny, making it look wildly overspent even
+    // though the mortgage posting on schedule is completely normal.
+    const naive = calculatePacing({
+      period: AUGUST,
+      asOf: "2026-08-03",
+      allocation: 3300,
+      spentToDate: 2400,
+    });
+    expect(naive.pacingStatus).toBe("BEHIND"); // "BEHIND" = overspending relative to naive pace — the bug.
+  });
+
+  it("with expectedSpendToDateOverride summed from correctly-modeled children, the same scenario reads as on track", () => {
+    const mortgage = calculatePacing({
+      period: AUGUST,
+      asOf: "2026-08-03",
+      allocation: 2400,
+      spentToDate: 2400,
+      spendingType: "FIXED_COMMITMENT",
+      fixedDueDayOfMonth: 3,
+    });
+    const groceries = calculatePacing({
+      period: AUGUST,
+      asOf: "2026-08-03",
+      allocation: 900,
+      spentToDate: 0,
+      spendingType: "FLEXIBLE",
+    });
+    const expectedSpendToDateOverride = mortgage.expectedSpendToDate.plus(groceries.expectedSpendToDate);
+
+    const aggregate = calculatePacing({
+      period: AUGUST,
+      asOf: "2026-08-03",
+      allocation: 3300,
+      spentToDate: 2400,
+      expectedSpendToDateOverride,
+    });
+
+    // Mortgage contributes its full $2400 (posted) + groceries' small ~3-days-in
+    // linear share — not a flat linear smear of the combined $3300 allocation
+    // (which on day 3 of 31 would naively expect only ~$319 spent so far).
+    expect(aggregate.expectedSpendToDate.toNumber()).toBeCloseTo(expectedSpendToDateOverride.toNumber(), 5);
+    expect(aggregate.expectedSpendToDate.toNumber()).toBeGreaterThan(2400);
+    expect(aggregate.variance.abs().toNumber()).toBeLessThan(100); // close to expected either way
+    expect(aggregate.pacingStatus).toBe("ON_TRACK");
+  });
+
+  it("still lets a genuinely-overspending aggregate register as such once the fixed commitment is accounted for", () => {
+    const mortgage = calculatePacing({
+      period: AUGUST,
+      asOf: "2026-08-10",
+      allocation: 2400,
+      spentToDate: 2400,
+      spendingType: "FIXED_COMMITMENT",
+      fixedDueDayOfMonth: 3,
+    });
+    const groceries = calculatePacing({
+      period: AUGUST,
+      asOf: "2026-08-10",
+      allocation: 900,
+      spentToDate: 700, // way ahead of the ~10-day linear expectation (~290)
+      spendingType: "FLEXIBLE",
+    });
+    const expectedSpendToDateOverride = mortgage.expectedSpendToDate.plus(groceries.expectedSpendToDate);
+
+    const aggregate = calculatePacing({
+      period: AUGUST,
+      asOf: "2026-08-10",
+      allocation: 3300,
+      spentToDate: 3100,
+      expectedSpendToDateOverride,
+    });
+
+    expect(aggregate.pacingStatus).toBe("BEHIND"); // genuinely overspending on groceries, correctly still flagged.
+  });
+});

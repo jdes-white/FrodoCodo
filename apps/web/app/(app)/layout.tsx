@@ -15,7 +15,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <NavBar />
       <div className="flex-1 pb-20 sm:pb-0">
         <header
-          className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-6"
+          className="flex h-16 items-center justify-between gap-3 border-b px-4 sm:px-6"
           style={{ borderColor: "var(--color-border)" }}
         >
           <div className="min-w-0">

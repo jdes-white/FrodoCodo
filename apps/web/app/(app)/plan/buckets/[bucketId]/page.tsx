@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatAUD } from "@frodocodo/shared";
+import { deriveSpendPaceStatus, spendPaceLabel } from "@frodocodo/domain";
 import { requireSession } from "@/lib/session";
 import { getBudgetSnapshot } from "@/lib/budgetSnapshot";
 import { listTransactions } from "@/lib/transactions";
-import { statusLabel, statusColorVar, statusSoftColorVar } from "@/lib/statusDisplay";
+import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
 import { ProgressBar } from "@/components/ProgressBar";
 import { TransactionList } from "@/components/TransactionList";
 import { Card } from "@/components/Card";
@@ -20,6 +21,7 @@ export default async function BucketDetailPage({ params }: { params: Promise<{ b
   if (!bucket) notFound();
 
   const transactions = await listTransactions(session.householdId, { bucketId, limit: 15 });
+  const bucketStatus = deriveSpendPaceStatus(bucket.pacing);
 
   return (
     <div className="flex flex-col gap-6">
@@ -37,14 +39,10 @@ export default async function BucketDetailPage({ params }: { params: Promise<{ b
           remaining of {formatAUD(bucket.pacing.allocation)}
         </p>
         <div className="mt-3">
-          <StatusPill
-            label={statusLabel(bucket.pacing.pacingStatus)}
-            color={statusColorVar(bucket.pacing.pacingStatus)}
-            soft={statusSoftColorVar(bucket.pacing.pacingStatus)}
-          />
+          <StatusPill label={spendPaceLabel(bucketStatus)} color={spendPaceColorVar(bucketStatus)} soft={spendPaceSoftColorVar(bucketStatus)} />
         </div>
         <div className="mt-4">
-          <ProgressBar percent={bucket.pacing.percentConsumed} colorVar={statusColorVar(bucket.pacing.pacingStatus)} />
+          <ProgressBar percent={bucket.pacing.percentConsumed} colorVar={spendPaceColorVar(bucketStatus)} />
         </div>
         <p className="mt-3 text-xs" style={{ color: "var(--color-text-muted)" }}>
           Projected to finish at {formatAUD(bucket.pacing.projectedEndOfPeriod)}
@@ -59,27 +57,30 @@ export default async function BucketDetailPage({ params }: { params: Promise<{ b
           Categories
         </h2>
         <div className="flex flex-col gap-2">
-          {bucket.categories.map((category) => (
-            <Card key={category.categoryId} padding="p-3.5">
-              <div className="flex items-center gap-3">
-                <CategoryIcon name={category.name} size={36} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-sm font-medium">{category.name}</p>
-                    <span className="shrink-0 text-xs font-medium" style={{ color: statusColorVar(category.pacing.pacingStatus) }}>
-                      {statusLabel(category.pacing.pacingStatus)}
-                    </span>
-                  </div>
-                  <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-                    {formatAUD(category.pacing.spentToDate)} of {formatAUD(category.pacing.allocation)}
-                  </p>
-                  <div className="mt-1.5">
-                    <ProgressBar percent={category.pacing.percentConsumed} colorVar={statusColorVar(category.pacing.pacingStatus)} />
+          {bucket.categories.map((category) => {
+            const categoryStatus = deriveSpendPaceStatus(category.pacing);
+            return (
+              <Card key={category.categoryId} padding="p-3.5">
+                <div className="flex items-center gap-3">
+                  <CategoryIcon name={category.name} size={36} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-sm font-medium">{category.name}</p>
+                      <span className="shrink-0 text-xs font-medium" style={{ color: spendPaceColorVar(categoryStatus) }}>
+                        {spendPaceLabel(categoryStatus)}
+                      </span>
+                    </div>
+                    <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                      {formatAUD(category.pacing.spentToDate)} of {formatAUD(category.pacing.allocation)}
+                    </p>
+                    <div className="mt-1.5">
+                      <ProgressBar percent={category.pacing.percentConsumed} colorVar={spendPaceColorVar(categoryStatus)} />
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       </section>
 
