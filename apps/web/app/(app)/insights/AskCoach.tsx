@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef } from "react";
 import { askCoach, type AskState } from "./actions";
 
 const SUGGESTIONS = [
@@ -11,21 +11,30 @@ const SUGGESTIONS = [
 
 export function AskCoach() {
   const [state, formAction, isPending] = useActionState(askCoach, {});
+  const inputRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="flex flex-col gap-3">
       <form action={formAction} className="flex gap-2">
         <input
+          ref={inputRef}
           name="question"
           placeholder="Ask a question about your budget…"
           defaultValue={state.question}
-          className="flex-1 rounded-xl border px-3 py-2 text-sm"
+          // 16px (text-base) is deliberate, not decorative: iOS Safari
+          // auto-zooms the whole page on focus for any input rendered
+          // below 16px, which is what was making the field feel zoomed in
+          // and the Ask button hard to reach. Fixing the input's own size
+          // is the mobile-safe way to prevent that zoom — disabling
+          // pinch-zoom at the viewport level would "fix" it by taking away
+          // an accessibility feature instead.
+          className="min-w-0 flex-1 rounded-xl border px-3 py-2 text-base"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
         <button
           type="submit"
           disabled={isPending}
-          className="rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="shrink-0 rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           style={{ background: "var(--color-accent)" }}
         >
           {isPending ? "…" : "Ask"}
@@ -35,13 +44,20 @@ export function AskCoach() {
       {!state.answer && (
         <div className="flex flex-wrap gap-1.5">
           {SUGGESTIONS.map((s) => (
-            <span
+            <button
               key={s}
-              className="rounded-full border px-2.5 py-1 text-xs"
+              type="button"
+              onClick={() => {
+                if (inputRef.current) {
+                  inputRef.current.value = s;
+                  inputRef.current.focus();
+                }
+              }}
+              className="rounded-full border px-2.5 py-1 text-xs transition hover:opacity-80"
               style={{ borderColor: "var(--color-border)", color: "var(--color-text-muted)" }}
             >
               {s}
-            </span>
+            </button>
           ))}
         </div>
       )}

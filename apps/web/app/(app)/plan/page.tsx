@@ -42,7 +42,7 @@ export default async function PlanPage() {
                         step="1"
                         min="0"
                         defaultValue={category.pacing.allocation.toNumber()}
-                        className="w-28 rounded-lg border px-2 py-1 text-right text-sm"
+                        className="w-28 rounded-lg border px-2 py-1 text-right text-base"
                         style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
                       />
                     ) : (

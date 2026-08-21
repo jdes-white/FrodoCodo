@@ -13,7 +13,7 @@ const MUTED = { color: "var(--color-text-muted)" } as const;
 export default async function DashboardPage() {
   const session = await requireSession();
   const [user, snapshot] = await Promise.all([getCurrentUser(session), getBudgetSnapshot(session.householdId)]);
-  const { totalPacing, flexibleBudget, buckets, lastSyncedAt, staleSyncAccountNames } = snapshot;
+  const { totalPacing, flexibleBudget, buckets } = snapshot;
   const firstName = user.name.split(" ")[0] ?? user.name;
 
   return (
@@ -25,14 +25,8 @@ export default async function DashboardPage() {
           periodLabel={formatDateRange(snapshot.period.startDate, snapshot.period.endDate)}
           totalPacing={totalPacing}
           flexiblePercentConsumed={flexibleBudget.percentConsumed}
-          hasAttentionNeeded={staleSyncAccountNames.length > 0}
         />,
-        <Panel2
-          key="panel-2"
-          buckets={buckets}
-          lastSyncedAt={lastSyncedAt}
-          staleSyncAccountNames={staleSyncAccountNames}
-        />,
+        <Panel2 key="panel-2" buckets={buckets} />,
       ]}
     />
   );
@@ -53,13 +47,11 @@ function Panel1({
   periodLabel,
   totalPacing,
   flexiblePercentConsumed,
-  hasAttentionNeeded,
 }: {
   firstName: string;
   periodLabel: string;
   totalPacing: PacingResult;
   flexiblePercentConsumed: number;
-  hasAttentionNeeded: boolean;
 }) {
   const status = deriveSpendPaceStatus(totalPacing);
   const color = spendPaceColorVar(status);
@@ -107,15 +99,6 @@ function Panel1({
           {explanation.summary}
         </p>
       </div>
-
-      {hasAttentionNeeded && (
-        <div
-          className="mx-auto w-full max-w-sm rounded-xl px-3 py-2 text-center text-xs font-medium"
-          style={{ background: "var(--status-behind-soft)", color: "var(--status-behind)" }}
-        >
-          ⚠️ Some accounts haven&apos;t synced recently — figures may be out of date
-        </div>
-      )}
     </div>
   );
 }
@@ -123,48 +106,23 @@ function Panel1({
 /**
  * "Where's it going?" — the full bucket breakdown (§6). Compact enough
  * that this household's four buckets all fit one viewport with no clipped
- * fifth card and no internal scroll (BucketCard was redesigned to a single
- * tight row for this — see components/BucketCard.tsx). A household with
- * substantially more than four buckets isn't accounted for yet; that would
- * need this panel to become scrollable or split further, deliberately
- * deferred rather than guessed at here.
+ * fifth card and no internal scroll (BucketCard is a single tight row —
+ * see components/BucketCard.tsx). A household with substantially more
+ * than four buckets isn't accounted for yet; that would need this panel
+ * to become scrollable or split further, deliberately deferred rather
+ * than guessed at here.
  */
-function Panel2({
-  buckets,
-  lastSyncedAt,
-  staleSyncAccountNames,
-}: {
-  buckets: BucketSnapshot[];
-  lastSyncedAt: Date | null;
-  staleSyncAccountNames: string[];
-}) {
-  const stale = staleSyncAccountNames.length > 0;
+function Panel2({ buckets }: { buckets: BucketSnapshot[] }) {
   return (
-    <div className="flex h-full flex-col gap-2 px-4 pt-2 pb-2">
-      <h2 className="text-lg font-bold">Where&apos;s it going?</h2>
-      <div className="flex flex-col gap-1.5">
-        {buckets.map((bucket) => (
-          <BucketCard key={bucket.bucketId} bucket={bucket} />
-        ))}
-        {buckets.length === 0 && (
-          <p className="text-sm" style={MUTED}>
-            No budget buckets are set up yet. Head to Plan to allocate this period&apos;s budget.
-          </p>
-        )}
-      </div>
-      <div
-        className="mt-auto flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-center text-xs font-medium"
-        style={stale ? { background: "var(--status-behind-soft)", color: "var(--status-behind)" } : MUTED}
-      >
-        {lastSyncedAt ? (
-          <span>
-            {stale ? "⚠️ " : "🔄 "}
-            {stale ? `${staleSyncAccountNames.join(", ")} ${staleSyncAccountNames.length === 1 ? "hasn't" : "haven't"} synced recently` : `Synced ${formatRelativeTime(lastSyncedAt)}`}
-          </span>
-        ) : (
-          <span>No account has synced yet.</span>
-        )}
-      </div>
+    <div className="flex h-full flex-col justify-center gap-2.5 px-4">
+      {buckets.map((bucket) => (
+        <BucketCard key={bucket.bucketId} bucket={bucket} />
+      ))}
+      {buckets.length === 0 && (
+        <p className="text-sm" style={MUTED}>
+          No budget buckets are set up yet. Head to Plan to allocate this period&apos;s budget.
+        </p>
+      )}
     </div>
   );
 }
@@ -179,13 +137,4 @@ function greeting(): string {
 function formatDateRange(start: string, end: string): string {
   const fmt = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-AU", { day: "numeric", month: "short", timeZone: "UTC" });
   return `${fmt(start)} – ${fmt(end)}`;
-}
-
-function formatRelativeTime(date: Date): string {
-  const diffMs = Date.now() - date.getTime();
-  const diffHours = Math.round(diffMs / 3_600_000);
-  if (diffHours < 1) return "just now";
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.round(diffHours / 24);
-  return `${diffDays}d ago`;
 }

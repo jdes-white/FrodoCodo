@@ -25,9 +25,9 @@ export function BucketCard({ bucket }: { bucket: BucketSnapshot }) {
 
   return (
     <Link href={`/plan/buckets/${bucket.bucketId}`} className="block transition hover:opacity-90">
-      <Card padding="p-2" className="flex flex-col gap-1">
+      <Card padding="p-3" className="flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
-          <CategoryIcon name={bucket.name} size={22} />
+          <CategoryIcon name={bucket.name} size={26} />
           <p className="min-w-0 flex-1 truncate text-sm font-medium">{bucket.name}</p>
           <p className="shrink-0 text-sm font-semibold">{formatAUD(pacing.remaining)} left</p>
         </div>

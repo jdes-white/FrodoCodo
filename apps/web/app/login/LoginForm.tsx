@@ -21,7 +21,7 @@ export function LoginForm() {
           type="email"
           required
           autoComplete="email"
-          className="rounded-xl border px-3 py-2 text-sm outline-none"
+          className="rounded-xl border px-3 py-2 text-base outline-none"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
       </div>
@@ -35,7 +35,7 @@ export function LoginForm() {
           type="password"
           required
           autoComplete="current-password"
-          className="rounded-xl border px-3 py-2 text-sm outline-none"
+          className="rounded-xl border px-3 py-2 text-base outline-none"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
       </div>

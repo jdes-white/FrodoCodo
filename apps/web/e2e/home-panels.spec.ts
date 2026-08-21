@@ -62,11 +62,12 @@ for (const viewport of MOBILE_VIEWPORTS) {
 
     test("shows exactly two pagination dots", async ({ page }) => {
       await login(page);
-      // The dots are decorative (aria-hidden) spans inside the absolutely
-      // positioned indicator — count them via a stable structural selector.
+      // The dots are decorative (aria-hidden) spans inside a fixed indicator
+      // box spanning the same region as the panel container — count them via
+      // a stable structural selector.
       const dotCount = await page.evaluate(() => {
         const indicator = document.querySelector('[aria-hidden="true"].pointer-events-none');
-        return indicator ? indicator.children.length : 0;
+        return indicator ? indicator.querySelectorAll("span").length : 0;
       });
       expect(dotCount).toBe(2);
     });
@@ -81,7 +82,9 @@ for (const viewport of MOBILE_VIEWPORTS) {
       });
       await page.waitForTimeout(150);
 
-      await expect(page.getByText("Where's it going?")).toBeVisible();
+      // Panel 2 has no heading (deliberately removed) — a bucket row is the
+      // stable signal that Panel 2's content is now the one in view.
+      await expect(page.getByText("Essentials").first()).toBeVisible();
     });
   });
 }
@@ -93,7 +96,7 @@ test.describe("Home panels on desktop — pagination metaphor not forced", () =>
     await login(page);
 
     await expect(page.getByText("remaining of")).toBeVisible();
-    await expect(page.getByText("Where's it going?")).toBeVisible();
+    await expect(page.getByText("Essentials").first()).toBeVisible();
 
     const scrollSnapType = await page.evaluate(() => {
       const container = document.querySelectorAll("section")[0]?.parentElement;

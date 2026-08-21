@@ -119,7 +119,7 @@ export default async function TransactionDetailPage({ params }: { params: Promis
             name="notes"
             defaultValue={transaction.notes ?? ""}
             rows={3}
-            className="rounded-lg border px-3 py-2 text-sm"
+            className="rounded-lg border px-3 py-2 text-base"
             style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
           />
           <button

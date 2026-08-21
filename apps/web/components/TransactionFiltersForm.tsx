@@ -18,10 +18,15 @@ export function TransactionFiltersForm({
 }: {
   categories: CategoryOption[];
   accounts: AccountOption[];
-  current: { categoryId?: string; accountId?: string; merchantQuery?: string; needsReviewOnly?: string };
+  current: { categoryId?: string; accountId?: string; merchantQuery?: string; needsReviewOnly?: string; month?: string };
 }) {
   return (
     <Card as="form" method="get" padding="p-3" className="flex flex-wrap items-end gap-2">
+      {/* A GET form replaces the whole query string on submit — carry the
+          active month filter through as a hidden field so filtering by
+          category/account/merchant doesn't silently reset it back to the
+          current month. */}
+      {current.month && <input type="hidden" name="month" value={current.month} />}
       <div className="flex flex-col gap-1">
         <label className="text-xs" style={{ color: "var(--color-text-muted)" }}>
           Merchant
@@ -30,7 +35,7 @@ export function TransactionFiltersForm({
           name="merchantQuery"
           defaultValue={current.merchantQuery}
           placeholder="Search..."
-          className="rounded-lg border px-2 py-1.5 text-sm"
+          className="rounded-lg border px-2 py-1.5 text-base"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
       </div>

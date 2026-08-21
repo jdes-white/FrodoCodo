@@ -39,22 +39,18 @@
   --status-off-track: #d6473f;
   --status-off-track-soft: #fce3e1;
 
-  /* Fixed layout metrics (not colors) so Home's paginated panels can size
-     themselves to exactly fill the viewport between the app header and the
-     bottom nav via calc(100dvh - ...) — see components/HomePager.tsx. Both
-     the header ((app)/layout.tsx) and NavBar's mobile bar are given
-     matching explicit heights so this arithmetic is reliable rather than
-     guessing at intrinsic content height. */
+  /* Fixed layout metrics (not colors) so Home's paginated panels can be
+     position:fixed directly between the app header and the bottom nav
+     (top: var(--app-header-h); bottom: var(--app-nav-h) — see
+     components/HomePager.tsx) instead of computed via calc(100dvh - ...)
+     arithmetic that has to guess at surrounding padding (<main>'s py-6,
+     the app shell's pb-20) and drifted out of sync with real devices.
+     Fixed positioning is measured against the viewport directly, so it
+     never depends on that surrounding padding at all. Both the header
+     ((app)/layout.tsx) and NavBar's mobile bar are given matching explicit
+     heights (h-16 / h-14) so these two values are reliable. */
   --app-header-h: 64px;
   --app-nav-h: calc(56px + env(safe-area-inset-bottom));
-  /* Everything besides header/nav that eats into document height on mobile
-     before Home's paginated panels start: <main>'s own py-6 (3rem total)
-     plus the app shell's pb-20 (5rem) reserved so normal pages' last
-     content clears the fixed nav. Home folds all of it into its panels'
-     height calc directly (see components/HomePager.tsx) instead of fighting
-     it with negative margins, so the panels are the *only* scrollable
-     region on that page — the surrounding document never scrolls too. */
-  --app-chrome-h: calc(var(--app-header-h) + var(--app-nav-h) + 8rem);
 
   --cat-1: #ea8c14;
   --cat-1-soft: #fdedd3;
@@ -165,4 +161,15 @@ body {
 
 a {
   color: inherit;
+}
+
+/* Home's panel container scrolls (for scroll-snap paging) but should only
+   ever be driven by the swipe gesture + the custom dot indicator, never a
+   visible native scrollbar competing for the same real estate. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Safari/Chrome/WebKit — what iOS uses */
 }

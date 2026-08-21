@@ -1,7 +1,11 @@
 import { requireSession } from "@/lib/session";
 import { getLiveInsights } from "@/lib/insights";
+import { getBudgetSnapshot } from "@/lib/budgetSnapshot";
+import { deriveSpendPaceStatus, explainSpendPace, spendPaceLabel } from "@frodocodo/domain";
+import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
 import { AskCoach } from "./AskCoach";
 import { Card } from "@/components/Card";
+import { StatusPill } from "@/components/StatusPill";
 import { PageHeader } from "@/components/PageHeader";
 
 const DEFAULT_SEVERITY = { label: "FYI", catToken: "2" };
@@ -13,16 +17,38 @@ const SEVERITY: Record<string, { label: string; catToken: string }> = {
 
 export default async function InsightsPage() {
   const session = await requireSession();
-  const insights = await getLiveInsights(session.householdId);
+  const [insights, snapshot] = await Promise.all([getLiveInsights(session.householdId), getBudgetSnapshot(session.householdId)]);
+
+  // Same status logic Home's Panel 1 uses (packages/domain/src/spendPace.ts)
+  // — one shared source of truth for how the household's position is
+  // calculated and worded, so this page can't independently describe the
+  // same position with different wording than Home does.
+  const status = deriveSpendPaceStatus(snapshot.totalPacing);
+  const explanation = explainSpendPace(
+    {
+      variance: snapshot.totalPacing.variance,
+      allocation: snapshot.totalPacing.allocation,
+      percentPeriodElapsed: snapshot.totalPacing.percentPeriodElapsed,
+      percentConsumed: snapshot.flexibleBudget.percentConsumed,
+    },
+    "flexible budget",
+  );
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="Insights" />
 
+      <Card padding="p-4" className="flex items-center gap-3">
+        <StatusPill label={spendPaceLabel(status)} color={spendPaceColorVar(status)} soft={spendPaceSoftColorVar(status)} />
+        <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+          {explanation.summary}
+        </p>
+      </Card>
+
       <section className="flex flex-col gap-2">
         {insights.length === 0 && (
           <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
-            Nothing notable right now — spending looks steady.
+            No other notable changes to flag right now.
           </p>
         )}
         {insights.map((insight) => {

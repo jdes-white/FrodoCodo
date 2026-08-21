@@ -78,7 +78,7 @@ export function ScenarioModeller({ categories }: { categories: CategoryOption[] 
           max={100}
           value={percent}
           onChange={(e) => setPercent(Number(e.target.value))}
-          className="w-16 rounded-lg border px-2 py-1"
+          className="w-16 rounded-lg border px-2 py-1 text-base"
           style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}
         />
         <span>%</span>
