@@ -198,6 +198,25 @@ waits and then sees "no pending migrations" rather than racing the first.
 That's a deliberate decision to make explicitly at that point (and would
 mean adding `DIRECT_URL` back to `render.yaml`), not the current default.
 
+**Incident precedent:** the North Star migration
+(`20260822113229_add_north_star_assumptions`) shipped without anyone
+running `prisma migrate deploy` against the live Neon database by hand,
+which crashed `/north-star` in production with `PrismaClientKnownRequestError
+P2021` ("table does not exist") — every other page was unaffected since
+nothing else queried that table. Rather than requiring a manual migration
+step against Neon, `apps/web/lib/northStar.ts`'s `ensureNorthStarTable()`
+lazily creates that one table/index/constraint via idempotent raw SQL
+(`CREATE TABLE IF NOT EXISTS` etc.) over the ordinary pooled
+`DATABASE_URL` connection the app already has, the first time North Star
+is accessed. This is a targeted self-heal for that specific incident, not
+a general substitute for running migrations by hand — new tables/columns
+added by future migrations still need `prisma migrate deploy` run against
+Neon as described above. If a migration is later run by hand against a
+database this self-heal already patched, resolve the "already applied"
+mismatch with `prisma migrate resolve --applied
+20260822113229_add_north_star_assumptions` rather than letting `migrate
+deploy` try to recreate the table.
+
 ## Health checks
 
 Two separate endpoints, deliberately:
