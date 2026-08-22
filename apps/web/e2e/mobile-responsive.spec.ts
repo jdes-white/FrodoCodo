@@ -38,7 +38,7 @@ for (const viewport of VIEWPORTS) {
   test.describe(`no horizontal overflow at ${viewport.name} (${viewport.width}x${viewport.height})`, () => {
     test.use({ viewport });
 
-    test("login, dashboard, transactions, transaction detail, plan, insights, settings", async ({ page }) => {
+    test("login, dashboard, transactions, transaction detail, plan, insights, north star, settings", async ({ page }) => {
       await login(page);
 
       // Dashboard
@@ -68,6 +68,10 @@ for (const viewport of VIEWPORTS) {
 
       // Insights
       await page.goto("/insights");
+      await expectNoHorizontalOverflow(page);
+
+      // North Star (both paginated panels)
+      await page.goto("/north-star");
       await expectNoHorizontalOverflow(page);
 
       // Settings

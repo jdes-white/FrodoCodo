@@ -42,7 +42,7 @@
   /* Fixed layout metrics (not colors) so Home's paginated panels can be
      position:fixed directly between the app header and the bottom nav
      (top: var(--app-header-h); bottom: var(--app-nav-h) — see
-     components/HomePager.tsx) instead of computed via calc(100dvh - ...)
+     components/PagedPanels.tsx) instead of computed via calc(100dvh - ...)
      arithmetic that has to guess at surrounding padding (<main>'s py-6,
      the app shell's pb-20) and drifted out of sync with real devices.
      Fixed positioning is measured against the viewport directly, so it
@@ -172,4 +172,32 @@ a {
 }
 .no-scrollbar::-webkit-scrollbar {
   display: none; /* Safari/Chrome/WebKit — what iOS uses */
+}
+
+/* Invisible overlay slider for North Star's dependency dial
+   (components/DependencyDial.tsx) — a real <input type="range"> layered
+   over a custom SVG arc so dragging gets native touch/mouse/keyboard
+   support for free. Only the SVG marker it drives is meant to be visible,
+   so the input itself (track + thumb) is made fully transparent while
+   keeping a generously sized thumb as the actual touch target. */
+.dial-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  opacity: 0;
+  margin: 0;
+}
+.dial-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 44px;
+  height: 44px;
+}
+.dial-range::-moz-range-thumb {
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: transparent;
+}
+.dial-range::-moz-range-track {
+  background: transparent;
 }

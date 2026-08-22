@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
+ * Shared two-panel mobile pagination shell — used by Home and North Star.
  * Mobile: two full-height panels the user pages between via vertical
  * swipe/scroll, using native CSS scroll-snap (scroll-snap-type: y mandatory
  * + snap-align: start on each panel) rather than a JS carousel — the
@@ -32,7 +33,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
  * without listening to raw scroll events. The native scrollbar is hidden
  * (.no-scrollbar) — the dots are the only paging indicator.
  */
-export function HomePager({ panels }: { panels: [ReactNode, ReactNode] }) {
+export function PagedPanels({ panels }: { panels: [ReactNode, ReactNode] }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
 

@@ -1,8 +1,20 @@
 import { Card } from "./Card";
 
-export function StatTile({ icon, label, value, sublabel }: { icon: string; label: string; value: string; sublabel: string }) {
+export function StatTile({
+  icon,
+  label,
+  value,
+  sublabel,
+  padding = "p-3",
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  sublabel: string;
+  padding?: string;
+}) {
   return (
-    <Card className="flex min-w-0 flex-1 flex-col gap-1.5" padding="p-3">
+    <Card className="flex min-w-0 flex-1 flex-col gap-1.5" padding={padding}>
       <div className="flex items-center gap-1.5">
         <span
           className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px]"

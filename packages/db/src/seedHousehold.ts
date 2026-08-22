@@ -123,6 +123,28 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
     ],
   });
 
+  log("Creating North Star assumptions...");
+  // V1 starting assumptions exactly as specified — see
+  // packages/domain/src/northStar.ts for what they drive. Not admin-gated
+  // to edit later; this is just the seed starting point.
+  await prisma.northStarAssumptions.create({
+    data: {
+      householdId: household.id,
+      lifestyleTarget: 190000,
+      employmentIncome: 220000,
+      investedAssetsToday: 70000,
+      incomeProducingPortion: 0.5,
+      cashYield: 0.04,
+      capitalGrowthAssumption: 0.055,
+      reinvestInvestmentIncome: true,
+      plannedAnnualContribution: 30000,
+      sideBusinessIncome: 0,
+      otherPassiveIncome: 0,
+      timeHorizonYears: 10,
+      targetEmploymentDependency: 0,
+    },
+  });
+
   log("Creating budget buckets and categories...");
   const bucketByKey = new Map<string, { id: string }>();
   for (const b of BUCKETS) {

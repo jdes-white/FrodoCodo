@@ -6,7 +6,7 @@ import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
 import { BucketCard } from "@/components/BucketCard";
 import { ProgressRing } from "@/components/ProgressRing";
 import { StatusPill } from "@/components/StatusPill";
-import { HomePager } from "@/components/HomePager";
+import { PagedPanels } from "@/components/PagedPanels";
 
 const MUTED = { color: "var(--color-text-muted)" } as const;
 
@@ -17,7 +17,7 @@ export default async function DashboardPage() {
   const firstName = user.name.split(" ")[0] ?? user.name;
 
   return (
-    <HomePager
+    <PagedPanels
       panels={[
         <Panel1
           key="panel-1"

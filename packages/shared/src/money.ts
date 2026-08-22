@@ -39,3 +39,26 @@ export function percentage(numerator: Money, denominator: Money): number {
   if (denominator.isZero()) return 0;
   return numerator.dividedBy(denominator).times(100).toNumber();
 }
+
+/** "$17.6k" / "$1.2m" style compact form, for one-line summaries where the
+ * full "$17,600.00" would be too long (e.g. North Star's insight line). */
+export function formatCompactAUD(value: Money): string {
+  const negative = value.isNegative();
+  const abs = value.abs();
+  const sign = negative ? "-" : "";
+
+  if (abs.greaterThanOrEqualTo(1_000_000)) {
+    const millions = abs.dividedBy(1_000_000);
+    return `${sign}$${trimTrailingZero(millions)}m`;
+  }
+  if (abs.greaterThanOrEqualTo(1_000)) {
+    const thousands = abs.dividedBy(1_000);
+    return `${sign}$${trimTrailingZero(thousands)}k`;
+  }
+  return formatAUD(value);
+}
+
+function trimTrailingZero(value: Money): string {
+  const rounded = value.toDecimalPlaces(1);
+  return rounded.modulo(1).isZero() ? rounded.toFixed(0) : rounded.toFixed(1);
+}

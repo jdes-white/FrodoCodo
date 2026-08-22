@@ -212,6 +212,7 @@ model Household {
   auditEvents        AuditEvent[]
   merchants          Merchant[]
   merchantRules      MerchantRule[]
+  northStarAssumptions NorthStarAssumptions?
 }
 
 model HouseholdMember {
@@ -618,6 +619,48 @@ model NotificationPreference {
   user      User      @relation(fields: [userId], references: [id])
 
   @@unique([householdId, userId, type, channel])
+}
+
+// ---------- North Star (long-term financial independence direction) ----------
+
+// A household-level (not per-user) set of editable assumptions driving the
+// Employment Dependency model — see packages/domain/src/northStar.ts for
+// the actual calculations. One row per household; getOrCreate'd on first
+// visit (apps/web/lib/northStar.ts) rather than requiring every household
+// to be re-seeded when this table was introduced.
+model NorthStarAssumptions {
+  id          String @id @default(cuid())
+  householdId String @unique
+
+  // "Our life" — today's-dollars annual figures the rest of the model is
+  // built from. lifestyleTarget intentionally folds in the mortgage and
+  // all lifestyle costs as one number (§1 of the spec) rather than being
+  // decomposed — the household updates this periodically as life changes.
+  lifestyleTarget  Decimal @db.Decimal(14, 2)
+  employmentIncome Decimal @db.Decimal(14, 2) // combined after-tax household employment income
+
+  // "Investments"
+  investedAssetsToday       Decimal @db.Decimal(14, 2)
+  incomeProducingPortion    Decimal @db.Decimal(6, 4) // 0-1 fraction of invested assets treated as cash-yield-bearing
+  cashYield                 Decimal @db.Decimal(6, 4) // 0-1 fraction, annual cash yield on the income-producing portion
+  capitalGrowthAssumption   Decimal @db.Decimal(6, 4) // 0-1 fraction, annual capital growth used only for the projection
+  reinvestInvestmentIncome  Boolean @default(true)
+  plannedAnnualContribution Decimal @db.Decimal(14, 2)
+
+  // "Other engines" — already after-tax and after associated costs (§3)
+  sideBusinessIncome Decimal @db.Decimal(14, 2) @default(0)
+  otherPassiveIncome Decimal @db.Decimal(14, 2) @default(0)
+
+  // "Direction" — the destination is deliberately editable, not hard-coded
+  // (§13); timeHorizonYears only bounds the projection table, it isn't a
+  // deadline the model enforces.
+  timeHorizonYears           Int     @default(10)
+  targetEmploymentDependency Decimal @db.Decimal(5, 2) @default(0) // 0-100, 0 = "work optional"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 }
 
 // ---------- Audit ----------

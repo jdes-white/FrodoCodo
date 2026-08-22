@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toMoney, sumMoney, clampMin, formatAUD, percentage, ZERO } from "../money.js";
+import { toMoney, sumMoney, clampMin, formatAUD, formatCompactAUD, percentage, ZERO } from "../money.js";
 
 describe("toMoney / sumMoney", () => {
   it("parses numbers and strings without floating-point drift", () => {
@@ -40,6 +40,28 @@ describe("formatAUD", () => {
 
   it("formats small values under a thousand without a separator", () => {
     expect(formatAUD(toMoney(9.5))).toBe("$9.50");
+  });
+});
+
+describe("formatCompactAUD", () => {
+  it("formats thousands with a trimmed 'k' suffix, matching the North Star spec example exactly", () => {
+    expect(formatCompactAUD(toMoney(17600))).toBe("$17.6k");
+  });
+
+  it("drops the decimal when it's a whole number of thousands", () => {
+    expect(formatCompactAUD(toMoney(19000))).toBe("$19k");
+  });
+
+  it("formats millions with an 'm' suffix", () => {
+    expect(formatCompactAUD(toMoney(1200000))).toBe("$1.2m");
+  });
+
+  it("falls back to full formatting under one thousand", () => {
+    expect(formatCompactAUD(toMoney(950))).toBe("$950.00");
+  });
+
+  it("preserves a negative sign", () => {
+    expect(formatCompactAUD(toMoney(-17600))).toBe("-$17.6k");
   });
 });
 
