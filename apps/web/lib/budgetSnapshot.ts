@@ -16,6 +16,12 @@ export interface FlexibleBudgetSnapshot {
   allocation: Money;
   spentToDate: Money;
   percentConsumed: number;
+  /** Recurring-aware expected-to-date (Stage 2 aggregation, same pattern as
+   * totalPacing/bucket pacing below) — linear when no flexible category has
+   * a smarter model, but wired through calculatePacing so it automatically
+   * benefits if one ever does. Drives Home's pacing-ring expected-position
+   * marker (see components/PacingRing.tsx). */
+  expectedSpendToDate: Money;
 }
 
 export interface BucketSnapshot {
@@ -167,10 +173,25 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
   const flexibleCategories = [...bucketMap.values()].flatMap((b) => b.categories).filter((c) => c.spendingType === "FLEXIBLE");
   const flexibleAllocation = sumMoney(flexibleCategories.map((c) => c.pacing.allocation));
   const flexibleSpent = sumMoney(flexibleCategories.map((c) => c.pacing.spentToDate));
+  // Same recurring-aware aggregation as the bucket/total pacing above,
+  // scoped to flexible categories only — every category here is already
+  // FLEXIBLE (linear expected-to-date today, since only FIXED_COMMITMENT
+  // gets step-function treatment), but routing through calculatePacing
+  // rather than hand-deriving elapsed-time % keeps this correct
+  // automatically if flexible categories ever get smarter pacing too.
+  const flexibleExpectedOverride = sumMoney(flexibleCategories.map((c) => c.pacing.expectedSpendToDate));
+  const flexiblePacing = calculatePacing({
+    period,
+    asOf,
+    allocation: flexibleAllocation,
+    spentToDate: flexibleSpent,
+    expectedSpendToDateOverride: flexibleExpectedOverride,
+  });
   const flexibleBudget: FlexibleBudgetSnapshot = {
     allocation: flexibleAllocation,
     spentToDate: flexibleSpent,
     percentConsumed: percentage(flexibleSpent, flexibleAllocation),
+    expectedSpendToDate: flexiblePacing.expectedSpendToDate,
   };
 
   const lastSyncedAt = accounts.reduce<Date | null>((latest, a) => {

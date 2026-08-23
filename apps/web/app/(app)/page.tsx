@@ -1,10 +1,10 @@
-import { formatAUD } from "@frodocodo/shared";
+import { formatAUD, percentage } from "@frodocodo/shared";
 import { requireSession, getCurrentUser } from "@/lib/session";
-import { getBudgetSnapshot, type BucketSnapshot } from "@/lib/budgetSnapshot";
-import { deriveSpendPaceStatus, explainSpendPace, spendPaceLabel, type PacingResult } from "@frodocodo/domain";
-import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
+import { getBudgetSnapshot, type BucketSnapshot, type FlexibleBudgetSnapshot } from "@/lib/budgetSnapshot";
+import { derivePaceDifference, derivePaceStatus, paceStatusLabel, type PacingResult } from "@frodocodo/domain";
+import { paceStatusColorVar, paceStatusSoftColorVar, paceGradientColor } from "@/lib/pacePosition";
 import { BucketCard } from "@/components/BucketCard";
-import { ProgressRing } from "@/components/ProgressRing";
+import { PacingRing } from "@/components/PacingRing";
 import { StatusPill } from "@/components/StatusPill";
 import { PagedPanels } from "@/components/PagedPanels";
 
@@ -24,7 +24,7 @@ export default async function DashboardPage() {
           firstName={firstName}
           periodLabel={formatDateRange(snapshot.period.startDate, snapshot.period.endDate)}
           totalPacing={totalPacing}
-          flexiblePercentConsumed={flexibleBudget.percentConsumed}
+          flexibleBudget={flexibleBudget}
         />,
         <Panel2 key="panel-2" buckets={buckets} />,
       ]}
@@ -34,38 +34,41 @@ export default async function DashboardPage() {
 
 /**
  * "Where are we?" — the primary Home experience (§2 of the paginated-home
- * brief). Deliberately sparse: the ring + one caption line is meant to be
- * legible within ~2 seconds, not a dashboard of cards. The ring's color and
- * status pill come from spend *pace* (deriveSpendPaceStatus — is current
- * spending sustainable given how far through the period we are), which is
- * a different question from the dollar figure in the middle (budget
- * *position* — how much money is actually left). See
- * packages/domain/src/spendPace.ts for why those are kept distinct.
+ * brief). The ring now carries both halves of the pacing question at
+ * once — actual spend % of the flexible budget (thick arc) versus
+ * expected position % at this point in the period (thin arc + marker,
+ * flexibleBudget.expectedSpendToDate — recurring-aware where a category
+ * has that, linear elapsed-time otherwise, since only FIXED_COMMITMENT
+ * categories currently have a non-linear model and those are excluded
+ * from "flexible" by definition) — so the gap between the two arcs
+ * communicates pace visually and the old "X% through the period · Y%
+ * used" caption underneath is gone.
+ *
+ * This drives status/color through a *different* calculation than
+ * spendPace.ts's SpendPaceStatus (dollar-variance against the whole
+ * recurring-aware budget, used elsewhere e.g. Insights) — see
+ * packages/domain/src/pacePosition.ts for the percentage-point-difference
+ * system this ring specifically uses. The dollar figures in the center
+ * (remaining/allocation/days) stay driven by the total budget, unchanged.
  */
 function Panel1({
   firstName,
   periodLabel,
   totalPacing,
-  flexiblePercentConsumed,
+  flexibleBudget,
 }: {
   firstName: string;
   periodLabel: string;
   totalPacing: PacingResult;
-  flexiblePercentConsumed: number;
+  flexibleBudget: FlexibleBudgetSnapshot;
 }) {
-  const status = deriveSpendPaceStatus(totalPacing);
-  const color = spendPaceColorVar(status);
-  const soft = spendPaceSoftColorVar(status);
-  // The ring/pill's status is based on the whole budget (now recurring-aware —
-  // see budgetSnapshot.ts's expectedSpendToDateOverride), but the explanation
-  // caption reports against the *flexible* budget specifically: "42% of
-  // flexible budget used" is a more honest read of discretionary spending
-  // pace than a figure that includes e.g. a mortgage payment that already
-  // posted on schedule.
-  const explanation = explainSpendPace(
-    { variance: totalPacing.variance, allocation: totalPacing.allocation, percentPeriodElapsed: totalPacing.percentPeriodElapsed, percentConsumed: flexiblePercentConsumed },
-    "flexible budget",
-  );
+  const actualPercent = flexibleBudget.percentConsumed;
+  const expectedPercent = percentage(flexibleBudget.expectedSpendToDate, flexibleBudget.allocation);
+  const difference = derivePaceDifference(actualPercent, expectedPercent);
+  const status = derivePaceStatus(difference);
+  const color = paceStatusColorVar(status);
+  const soft = paceStatusSoftColorVar(status);
+  const arcColor = paceGradientColor(difference);
 
   return (
     <div className="flex h-full flex-col justify-center gap-3 px-4">
@@ -83,8 +86,8 @@ function Panel1({
           {periodLabel}
         </p>
         <div className="mt-2">
-          <ProgressRing percent={totalPacing.percentConsumed} colorVar={color}>
-            <StatusPill label={spendPaceLabel(status)} color={color} soft={soft} />
+          <PacingRing actualPercent={actualPercent} expectedPercent={expectedPercent} colorVar={arcColor}>
+            <StatusPill label={paceStatusLabel(status)} color={color} soft={soft} />
             <p className="mt-2 text-4xl font-extrabold tracking-tight">{formatAUD(totalPacing.remaining)}</p>
             <p className="text-xs" style={MUTED}>
               remaining of {formatAUD(totalPacing.allocation)}
@@ -93,11 +96,8 @@ function Panel1({
             <p className="text-xs font-semibold" style={{ color: "var(--color-accent)" }}>
               {Math.max(totalPacing.daysRemaining, 0)} days to go
             </p>
-          </ProgressRing>
+          </PacingRing>
         </div>
-        <p className="mt-3 text-center text-xs" style={MUTED}>
-          {explanation.summary}
-        </p>
       </div>
     </div>
   );

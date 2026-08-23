@@ -39,6 +39,25 @@
   --status-off-track: #d6473f;
   --status-off-track-soft: #fce3e1;
 
+  /* Home's pacing ring (components/PacingRing.tsx): five anchor colors for
+     a continuous dark-green -> light-green -> yellow -> orange -> red
+     gradient driven by lib/pacePosition.ts's paceGradientColor() via
+     CSS color-mix() — deliberately a *separate* palette from --status-*
+     above (which stays exactly as-is for Insights and everywhere else
+     still on the older 4-tier SpendPaceStatus). Solid variants color the
+     arc/pill text; -soft variants are the pill background, same pairing
+     convention as --status-*-soft. */
+  --pace-comfortable: #0f7a46;
+  --pace-comfortable-soft: #e0f3e8;
+  --pace-ahead: #4f9e78;
+  --pace-ahead-soft: #e6f3ec;
+  --pace-neutral: #b8860b;
+  --pace-neutral-soft: #faf1d8;
+  --pace-over: #d97a1f;
+  --pace-over-soft: #fbead9;
+  --pace-critical: #d6473f;
+  --pace-critical-soft: #fce3e1;
+
   /* Fixed layout metrics (not colors) so Home's paginated panels can be
      position:fixed directly between the app header and the bottom nav
      (top: var(--app-header-h); bottom: var(--app-nav-h) — see
@@ -92,6 +111,17 @@
     --status-behind-soft: #3b2a16;
     --status-off-track: #f26860;
     --status-off-track-soft: #3a1a18;
+
+    --pace-comfortable: #24cf83;
+    --pace-comfortable-soft: #123826;
+    --pace-ahead: #7fd6ac;
+    --pace-ahead-soft: #17342a;
+    --pace-neutral: #eec460;
+    --pace-neutral-soft: #3a2f12;
+    --pace-over: #f5a555;
+    --pace-over-soft: #3b2a16;
+    --pace-critical: #f26860;
+    --pace-critical-soft: #3a1a18;
 
     --cat-1: #f5a83e;
     --cat-1-soft: #3a2b12;
