@@ -19,7 +19,9 @@ test("household can log in, see budget position, drill into a bucket, and reclas
   // Dashboard: the primary "where do we stand" answer must render within seconds (§3, §17).
   await expect(page).toHaveURL("/");
   await expect(page.getByText("remaining of")).toBeVisible();
-  await expect(page.getByText(/Ahead of pace|Behind pace|On track/).first()).toBeVisible();
+  // Matches every spendPaceLabel() variant (packages/domain/src/spendPace.ts),
+  // including the "Comfortably on track" sub-case — not just a plain "On track".
+  await expect(page.getByText(/Ahead of pace|Behind pace|On track|Comfortably on track/).first()).toBeVisible();
 
   // Bucket-level position is visible on the same screen.
   const bucketCard = page.getByText("Essentials").first();

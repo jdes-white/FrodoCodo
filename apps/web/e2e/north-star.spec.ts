@@ -71,13 +71,14 @@ for (const viewport of MOBILE_VIEWPORTS) {
       }
     });
 
-    test("swiping to Page 2 reveals the editable assumptions", async ({ page }) => {
+    test("swiping to Page 2 reveals the compact assumption tiles", async ({ page }) => {
       await login(page);
       await page.goto("/north-star");
       await scrollToPanel2(page);
 
       await expect(page.getByText("Build your engine")).toBeVisible();
-      await expect(page.getByText("Directional projection")).toBeVisible();
+      await expect(page.getByText("Investments")).toBeVisible();
+      await expect(page.getByRole("button", { name: /Lifestyle/ })).toBeVisible();
     });
   });
 }
@@ -118,29 +119,103 @@ test.describe("North Star dependency dial", () => {
   });
 });
 
-test.describe("North Star assumption editing", () => {
+test.describe("North Star tile pairs (compact control panel redesign)", () => {
   test.use({ viewport: { width: 390, height: 844 } });
+
+  // "Other engines" — Side income (left) | Other passive (right).
+  function otherEnginesPair(page: Page) {
+    return page.locator("h3", { hasText: "Other engines" }).locator("..").locator("div.grid").first();
+  }
+
+  test("tapping the left tile in a pair expands it across both columns and hides the right tile", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await scrollToPanel2(page);
+
+    const pair = otherEnginesPair(page);
+    await expect(pair.getByRole("button", { name: /Side income/ })).toBeVisible();
+    await expect(pair.getByRole("button", { name: /Other passive/ })).toBeVisible();
+
+    await pair.getByRole("button", { name: /Side income/ }).click();
+
+    // The expanded card shows the full title/description/editor...
+    await expect(page.getByText("Side business / hustle income")).toBeVisible();
+    await expect(page.getByText("After tax and associated costs.")).toBeVisible();
+    // ...and the partner tile is gone while it's open.
+    await expect(pair.getByRole("button", { name: /Other passive/ })).toHaveCount(0);
+  });
+
+  test("tapping the right tile in a pair expands it across both columns and hides the left tile", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await scrollToPanel2(page);
+
+    const pair = otherEnginesPair(page);
+    await pair.getByRole("button", { name: /Other passive/ }).click();
+
+    await expect(page.getByText("Other passive income")).toBeVisible();
+    await expect(pair.getByRole("button", { name: /Side income/ })).toHaveCount(0);
+  });
+
+  test("closing an expanded tile restores the exact original pair", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await scrollToPanel2(page);
+
+    const pair = otherEnginesPair(page);
+    await pair.getByRole("button", { name: /Side income/ }).click();
+    await expect(page.getByText("Side business / hustle income")).toBeVisible();
+
+    await page.getByRole("button", { name: "Done" }).click();
+
+    await expect(pair.getByRole("button", { name: /Side income/ })).toBeVisible();
+    await expect(pair.getByRole("button", { name: /Other passive/ })).toBeVisible();
+    await expect(page.getByText("Side business / hustle income")).toHaveCount(0);
+  });
 
   test("editing an assumption on Page 2 persists across reload", async ({ page }) => {
     await login(page);
     await page.goto("/north-star");
     await scrollToPanel2(page);
 
-    const row = page.locator("details", { hasText: "Side business" });
-    await row.locator("summary").click();
-    await row.locator('input[name="value"]').fill("5000");
-    await row.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText("$5,000.00")).toBeVisible();
+    const pair = otherEnginesPair(page);
+    await pair.getByRole("button", { name: /Side income/ }).click();
+    await page.locator('input[type="number"]').fill("5000");
+    await page.getByRole("button", { name: "Save" }).click();
+
+    await expect(pair.getByRole("button", { name: /Side income/ })).toContainText("$5k");
 
     await page.reload();
     await scrollToPanel2(page);
-    await expect(page.getByText("$5,000.00")).toBeVisible();
+    await expect(otherEnginesPair(page).getByRole("button", { name: /Side income/ })).toContainText("$5k");
 
     // Restore the seed value so the demo household is left as re-runnable.
-    const restoreRow = page.locator("details", { hasText: "Side business" });
-    await restoreRow.locator("summary").click();
-    await restoreRow.locator('input[name="value"]').fill("0");
-    await restoreRow.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText("$0.00")).toBeVisible();
+    await otherEnginesPair(page)
+      .getByRole("button", { name: /Side income/ })
+      .click();
+    await page.locator('input[type="number"]').fill("0");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(otherEnginesPair(page).getByRole("button", { name: /Side income/ })).toContainText("$0.00");
+  });
+
+  test("the calculated Available surplus responds to a change in Employment income", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await scrollToPanel2(page);
+
+    await expect(page.getByText("$30,000.00 p.a.")).toBeVisible();
+
+    const ourLifePair = page.locator("h3", { hasText: "Our life" }).locator("..").locator("div.grid").first();
+    await ourLifePair.getByRole("button", { name: /Employment/ }).click();
+    await page.locator('input[type="number"]').fill("230000");
+    await page.getByRole("button", { name: "Save" }).click();
+
+    await expect(page.getByText("$40,000.00 p.a.")).toBeVisible();
+
+    // Restore the seed value.
+    await ourLifePair.getByRole("button", { name: /Employment/ }).click();
+    await page.locator('input[type="number"]').fill("220000");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("$30,000.00 p.a.")).toBeVisible();
   });
 });
