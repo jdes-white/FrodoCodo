@@ -12,12 +12,25 @@ const ITEMS = [
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 
+/**
+ * Six equal-width grid columns (not flex-1) so every destination gets a
+ * genuinely identical slot regardless of label length — that's what keeps
+ * "North Star" from ever redistributing space away from its neighbours.
+ * The active state highlights a small icon badge only, sized to the icon
+ * rather than the label — a two-word label like "North Star" would make
+ * a label-width background look lopsided next to five one-word items, and
+ * an icon-sized badge is identical for every item no matter what its
+ * label says. Labels are forced to one line (whitespace-nowrap) at a
+ * small enough size that all six fit even at the narrowest common iPhone
+ * width, so every item's icon and label sit at the same two fixed
+ * vertical positions — no item is ever taller than its neighbours.
+ */
 export function NavBar() {
   const pathname = usePathname();
 
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-20 flex h-14 items-stretch justify-around gap-1 border-t px-2 pb-[env(safe-area-inset-bottom)] shadow-[var(--shadow-card)] sm:sticky sm:top-0 sm:h-auto sm:justify-start sm:gap-1 sm:border-b sm:border-t-0 sm:px-4 sm:py-2"
+      className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t pb-[env(safe-area-inset-bottom)] shadow-[var(--shadow-card)] sm:static sm:flex sm:justify-start sm:gap-1 sm:border-b sm:border-t-0 sm:px-4 sm:py-2"
       style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
     >
       {ITEMS.map((item) => {
@@ -26,14 +39,24 @@ export function NavBar() {
           <Link
             key={item.href}
             href={item.href}
-            className="flex flex-1 flex-col items-center justify-center gap-0.5 rounded-xl px-2 text-[11px] font-medium transition-colors sm:flex-none sm:flex-row sm:justify-center sm:gap-2 sm:px-3 sm:py-2 sm:text-sm"
-            style={{
-              color: active ? "var(--color-accent)" : "var(--color-text-muted)",
-              background: active ? "var(--color-accent-soft)" : "transparent",
-            }}
+            className="flex min-w-0 flex-col items-center justify-center gap-1 py-2 sm:flex-none sm:flex-row sm:gap-2 sm:px-3 sm:py-2"
           >
-            <span aria-hidden>{item.icon}</span>
-            <span>{item.label}</span>
+            <span
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-base transition-colors sm:h-6 sm:w-6"
+              style={{
+                color: active ? "var(--color-accent)" : "var(--color-text-muted)",
+                background: active ? "var(--color-accent-soft)" : "transparent",
+              }}
+              aria-hidden
+            >
+              {item.icon}
+            </span>
+            <span
+              className="max-w-full truncate text-[10px] leading-none font-medium tracking-tight whitespace-nowrap sm:text-sm sm:tracking-normal"
+              style={{ color: active ? "var(--color-accent)" : "var(--color-text-muted)" }}
+            >
+              {item.label}
+            </span>
           </Link>
         );
       })}
