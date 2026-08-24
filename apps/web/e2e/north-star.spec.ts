@@ -102,7 +102,9 @@ async function dragDialTo(page: Page, percent: number) {
 test.describe("North Star dependency dial — persistent scenario (§7)", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("dragging the dial commits a scenario that survives release, and never changes the actual stored figure", async ({ page }) => {
+  test("dragging the dial commits a scenario that survives release, and shows the explored value as the headline while keeping the real figure as a caption", async ({
+    page,
+  }) => {
     await login(page);
     await page.goto("/north-star");
     await expect(page.getByText("Next milestone: below 90%")).toBeVisible();
@@ -115,9 +117,10 @@ test.describe("North Star dependency dial — persistent scenario (§7)", () => 
     await expect(page.getByText("Scenario: 30% dependency")).toBeVisible();
     await expect(page.getByRole("button", { name: "Reset · Live" })).toBeVisible();
 
-    // ...but the fixed "actual" figure on the dial never moves.
-    const actualAfter = await page.getByText("Employment dependency today").locator("..").locator("p").first().textContent();
-    expect(actualAfter).toBe(actualBefore);
+    // The dial's own headline now tracks the explored value, not the live one...
+    await expect(page.getByText("Exploring — today:")).toBeVisible();
+    // ...while the real, unchanged figure is preserved as a caption underneath it, not lost.
+    await expect(page.getByText(`Exploring — today: ${actualBefore}`)).toBeVisible();
   });
 
   test("supporting cells update to the selected scenario, matching the spec's worked example exactly", async ({ page }) => {
@@ -131,7 +134,10 @@ test.describe("North Star dependency dial — persistent scenario (§7)", () => 
     await expect(page.getByText("$190,000.00").first()).toBeVisible(); // Lifestyle to fund — unchanged
     await expect(page.getByText("required for 30% scenario")).toBeVisible();
     await expect(page.getByText("$133,000.00")).toBeVisible(); // Independent income -> required income
-    await expect(page.getByText("30%", { exact: true })).toBeVisible(); // Dependency -> selected %
+    // Dependency -> selected % — scoped to the stat tile, since the dial's
+    // own headline now also reads "30%" while this scenario is active.
+    const dependencyTileValue = page.getByText("Dependency", { exact: true }).locator("..").locator("..").locator("p").first();
+    await expect(dependencyTileValue).toHaveText("30%");
     await expect(page.getByText("Income needed", { exact: true })).toBeVisible();
     await expect(page.getByText("$131,600.00")).toBeVisible(); // replaces "Next milestone"
     await expect(page.getByText("Exploring a 30% dependency scenario")).toBeVisible();

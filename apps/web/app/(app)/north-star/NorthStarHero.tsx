@@ -67,7 +67,7 @@ export function NorthStarHero({
       </div>
 
       <Card className="hero-sky mx-auto w-full max-w-sm" padding="p-3">
-        <DependencyDial actualPercent={actualDependencyPercent} value={displayPercent} onChange={setScenarioPercent} />
+        <DependencyDial actualPercent={actualDependencyPercent} value={displayPercent} isScenario={isScenario} onChange={setScenarioPercent} />
 
         <div className="mt-2 w-full rounded-2xl border p-2 text-center" style={{ borderColor: "var(--color-border)", background: "var(--color-accent-soft)" }}>
           <div className="flex items-center gap-2">

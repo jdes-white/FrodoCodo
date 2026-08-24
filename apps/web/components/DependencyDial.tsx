@@ -31,6 +31,13 @@ function pointFor(percent: number) {
  * `actualPercent` is the household's real, current dependency figure —
  * always drawn as a separate, fixed marker on the arc so it stays
  * identifiable no matter what the draggable handle is currently exploring.
+ * It also used to be the only thing the headline readout below the dial
+ * ever showed, even while a scenario was active — the most visually
+ * prominent number on the panel looked frozen while dragging, and the
+ * value that *did* move lived in a smaller tile further down. `isScenario`
+ * lets that headline switch to the explored value while a scenario is
+ * active, with the real "today" figure demoted to a caption underneath it
+ * rather than disappearing.
  *
  * Implementation: an invisible native `<input type="range">` (dir="rtl" so
  * dragging left increases the value, matching 100% sitting on the left)
@@ -43,10 +50,12 @@ function pointFor(percent: number) {
 export function DependencyDial({
   actualPercent,
   value,
+  isScenario,
   onChange,
 }: {
   actualPercent: number;
   value: number;
+  isScenario: boolean;
   onChange: (percent: number) => void;
 }) {
   const actualPoint = pointFor(actualPercent);
@@ -86,9 +95,9 @@ export function DependencyDial({
       </div>
 
       <div className="text-center">
-        <p className="text-2xl font-extrabold tracking-tight">{actualPercent.toFixed(1)}%</p>
+        <p className="text-2xl font-extrabold tracking-tight">{isScenario ? `${value}%` : `${actualPercent.toFixed(1)}%`}</p>
         <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
-          Employment dependency today
+          {isScenario ? `Exploring — today: ${actualPercent.toFixed(1)}%` : "Employment dependency today"}
         </p>
       </div>
     </div>
