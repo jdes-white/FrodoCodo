@@ -2,6 +2,7 @@ import { requireSession } from "@/lib/session";
 import { listTransactions } from "@/lib/transactions";
 import { listCategoriesWithBuckets, listAccounts } from "@/lib/categories";
 import { currentMonth, monthBounds } from "@/lib/monthRange";
+import { withRouteTiming } from "@/lib/perf";
 import { TransactionList } from "@/components/TransactionList";
 import { TransactionFiltersForm } from "@/components/TransactionFiltersForm";
 import { MonthStepper } from "@/components/MonthStepper";
@@ -28,19 +29,21 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   // needs a category, so that view intentionally isn't month-constrained.
   const { startDate, endDate } = needsReviewOnly ? {} : monthBounds(month);
 
-  const [transactions, categories, accounts] = await Promise.all([
-    listTransactions(session.householdId, {
-      categoryId: params.categoryId || undefined,
-      accountId: params.accountId || undefined,
-      merchantQuery: params.merchantQuery || undefined,
-      needsReviewOnly,
-      startDate,
-      endDate,
-      limit: 150,
-    }),
-    listCategoriesWithBuckets(session.householdId),
-    listAccounts(session.householdId),
-  ]);
+  const [transactions, categories, accounts] = await withRouteTiming("/transactions", () =>
+    Promise.all([
+      listTransactions(session.householdId, {
+        categoryId: params.categoryId || undefined,
+        accountId: params.accountId || undefined,
+        merchantQuery: params.merchantQuery || undefined,
+        needsReviewOnly,
+        startDate,
+        endDate,
+        limit: 150,
+      }),
+      listCategoriesWithBuckets(session.householdId),
+      listAccounts(session.householdId),
+    ]),
+  );
 
   return (
     <div className="flex flex-col gap-4">

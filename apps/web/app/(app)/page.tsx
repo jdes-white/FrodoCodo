@@ -3,6 +3,7 @@ import { requireSession, getCurrentUser } from "@/lib/session";
 import { getBudgetSnapshot, type BucketSnapshot, type FlexibleBudgetSnapshot } from "@/lib/budgetSnapshot";
 import { derivePaceDifference, derivePaceStatus, paceStatusLabel, type PacingResult } from "@frodocodo/domain";
 import { paceStatusColorVar, paceStatusSoftColorVar, paceGradientColor } from "@/lib/pacePosition";
+import { withRouteTiming } from "@/lib/perf";
 import { BucketCard } from "@/components/BucketCard";
 import { PacingRing } from "@/components/PacingRing";
 import { StatusPill } from "@/components/StatusPill";
@@ -12,7 +13,9 @@ const MUTED = { color: "var(--color-text-muted)" } as const;
 
 export default async function DashboardPage() {
   const session = await requireSession();
-  const [user, snapshot] = await Promise.all([getCurrentUser(session), getBudgetSnapshot(session.householdId)]);
+  const [user, snapshot] = await withRouteTiming("/", () =>
+    Promise.all([getCurrentUser(session), getBudgetSnapshot(session.householdId)]),
+  );
   const { totalPacing, flexibleBudget, buckets } = snapshot;
   const firstName = user.name.split(" ")[0] ?? user.name;
 

@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -50,7 +51,15 @@ export async function destroySession(): Promise<void> {
   cookieStore.delete(COOKIE_NAME);
 }
 
-export async function getSession(): Promise<SessionPayload | null> {
+/**
+ * `requireSession()` is called both by the shared app layout and by every
+ * individual page it wraps — without memoization that's a redundant
+ * cookie-read + JWT-verify on every single navigation. `cache()` dedupes
+ * repeated calls within one request (the standard Next.js App Router
+ * pattern), so the actual verification only runs once per request
+ * regardless of how many places call it.
+ */
+export const getSession = cache(async (): Promise<SessionPayload | null> => {
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
@@ -66,7 +75,7 @@ export async function getSession(): Promise<SessionPayload | null> {
   } catch {
     return null;
   }
-}
+});
 
 /** Redirects to /login when there's no valid session. Use in every protected server component. */
 export async function requireSession(): Promise<SessionPayload> {
@@ -82,6 +91,7 @@ export async function requireAdmin(): Promise<SessionPayload> {
   return session;
 }
 
-export async function getCurrentUser(session: SessionPayload) {
+/** Layout + page both call this too — same cache() dedup as getSession above. */
+export const getCurrentUser = cache(async (session: SessionPayload) => {
   return prisma.user.findUniqueOrThrow({ where: { id: session.userId } });
-}
+});

@@ -1,6 +1,7 @@
 import { requireSession } from "@/lib/session";
 import { getLiveInsights } from "@/lib/insights";
 import { getBudgetSnapshot } from "@/lib/budgetSnapshot";
+import { withRouteTiming } from "@/lib/perf";
 import { deriveSpendPaceStatus, explainSpendPace, spendPaceLabel } from "@frodocodo/domain";
 import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
 import { AskCoach } from "./AskCoach";
@@ -17,7 +18,9 @@ const SEVERITY: Record<string, { label: string; catToken: string }> = {
 
 export default async function InsightsPage() {
   const session = await requireSession();
-  const [insights, snapshot] = await Promise.all([getLiveInsights(session.householdId), getBudgetSnapshot(session.householdId)]);
+  const [insights, snapshot] = await withRouteTiming("/insights", () =>
+    Promise.all([getLiveInsights(session.householdId), getBudgetSnapshot(session.householdId)]),
+  );
 
   // Same status logic Home's Panel 1 uses (packages/domain/src/spendPace.ts)
   // — one shared source of truth for how the household's position is

@@ -1,12 +1,13 @@
 import { requireSession } from "@/lib/session";
 import { getNorthStarSnapshot } from "@/lib/northStar";
+import { withRouteTiming } from "@/lib/perf";
 import { PagedPanels } from "@/components/PagedPanels";
 import { NorthStarHero } from "./NorthStarHero";
 import { AssumptionsPanel } from "./AssumptionsPanel";
 
 export default async function NorthStarPage() {
   const session = await requireSession();
-  const snapshot = await getNorthStarSnapshot(session.householdId);
+  const snapshot = await withRouteTiming("/north-star", () => getNorthStarSnapshot(session.householdId));
 
   return (
     <PagedPanels

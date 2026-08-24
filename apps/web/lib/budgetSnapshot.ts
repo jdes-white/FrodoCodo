@@ -3,6 +3,7 @@ import { prisma } from "@frodocodo/db";
 import { toMoney, sumMoney, percentage, addDays, todayUTC, type Money, type SpendingType } from "@frodocodo/shared";
 import { resolveBudgetPeriod, calculatePacing, type PacingResult, type BudgetPeriodBounds } from "@frodocodo/domain";
 import { fromPrismaDecimal } from "./decimal";
+import { getHousehold } from "./household";
 
 export interface CategorySnapshot {
   categoryId: string;
@@ -58,7 +59,9 @@ const STALE_SYNC_HOURS = 36;
  * any caller).
  */
 export async function getBudgetSnapshot(householdId: string, asOf: string = todayUTC()): Promise<BudgetSnapshot> {
-  const household = await prisma.household.findUniqueOrThrow({ where: { id: householdId } });
+  // cache()-deduped (lib/household.ts) — the app layout fetches this same
+  // row too; within one request this is a single shared DB round-trip.
+  const household = await getHousehold(householdId);
 
   const period = resolveBudgetPeriod(
     {

@@ -1,6 +1,7 @@
 import { formatAUD } from "@frodocodo/shared";
 import { requireSession } from "@/lib/session";
 import { getBudgetSnapshot } from "@/lib/budgetSnapshot";
+import { withRouteTiming } from "@/lib/perf";
 import { updateAllocations } from "./actions";
 import { ScenarioModeller } from "./ScenarioModeller";
 import { Card } from "@/components/Card";
@@ -8,7 +9,7 @@ import { PageHeader } from "@/components/PageHeader";
 
 export default async function PlanPage() {
   const session = await requireSession();
-  const snapshot = await getBudgetSnapshot(session.householdId);
+  const snapshot = await withRouteTiming("/plan", () => getBudgetSnapshot(session.householdId));
   const isAdmin = session.role === "ADMIN";
 
   const allCategories = snapshot.buckets.flatMap((b) =>

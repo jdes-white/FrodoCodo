@@ -2,6 +2,8 @@ import { formatAUD } from "@frodocodo/shared";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@frodocodo/db";
 import { fromPrismaDecimal } from "@/lib/decimal";
+import { getHousehold } from "@/lib/household";
+import { withRouteTiming } from "@/lib/perf";
 import { setAccountIncluded, disconnectInstitution } from "./actions";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
@@ -10,14 +12,16 @@ export default async function SettingsPage() {
   const session = await requireSession();
   const isAdmin = session.role === "ADMIN";
 
-  const [household, connections, members] = await Promise.all([
-    prisma.household.findUniqueOrThrow({ where: { id: session.householdId } }),
-    prisma.financialConnection.findMany({
-      where: { householdId: session.householdId },
-      include: { institution: true, accounts: true },
-    }),
-    prisma.householdMember.findMany({ where: { householdId: session.householdId }, include: { user: true } }),
-  ]);
+  const [household, connections, members] = await withRouteTiming("/settings", () =>
+    Promise.all([
+      getHousehold(session.householdId),
+      prisma.financialConnection.findMany({
+        where: { householdId: session.householdId },
+        include: { institution: true, accounts: true },
+      }),
+      prisma.householdMember.findMany({ where: { householdId: session.householdId }, include: { user: true } }),
+    ]),
+  );
 
   return (
     <div className="flex flex-col gap-6">
