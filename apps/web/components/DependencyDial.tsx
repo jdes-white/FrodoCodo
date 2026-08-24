@@ -1,9 +1,5 @@
 "use client";
 
-import { useState } from "react";
-import { toMoney, clampMin, formatCompactAUD } from "@frodocodo/shared";
-import { requiredIndependentIncomeForDependency } from "@frodocodo/domain";
-
 const SIZE_W = 240;
 const SIZE_H = 150;
 const CENTER_X = 120;
@@ -22,11 +18,19 @@ function pointFor(percent: number) {
 }
 
 /**
- * The interactive Employment Dependency dial (§7). Dragging explores what
- * independent income a different dependency level would need — it never
- * writes to the household's stored assumptions, so the "actual" marker
- * (today's real position) stays fixed on the arc the whole time as a
- * separate, non-interactive reference point.
+ * The interactive Employment Dependency gauge (§7). Purely presentational
+ * and fully controlled — `value` is whatever the parent
+ * (components/NorthStarHero.tsx) wants displayed, and dragging just
+ * reports the new value via `onChange`. It used to own its own transient
+ * drag state and snap back to the live default on release; now that
+ * exploring the dial creates a persistent scenario the household can walk
+ * away from and come back to, "what happens when you let go" is entirely
+ * the parent's call, not this component's — see NorthStarHero for the
+ * scenario-vs-live logic.
+ *
+ * `actualPercent` is the household's real, current dependency figure —
+ * always drawn as a separate, fixed marker on the arc so it stays
+ * identifiable no matter what the draggable handle is currently exploring.
  *
  * Implementation: an invisible native `<input type="range">` (dir="rtl" so
  * dragging left increases the value, matching 100% sitting on the left)
@@ -35,34 +39,18 @@ function pointFor(percent: number) {
  * accessibility semantics for free. The visible thumb is hidden
  * (.dial-range in globals.css); the SVG circle is the only thing the user
  * sees move.
- *
- * While not actively being dragged, the readout card defaults to the next
- * automatic milestone (matching the mockup's resting state) rather than
- * mirroring the actual position 1:1 — dragging temporarily overrides it,
- * and releasing reverts back to the milestone.
  */
 export function DependencyDial({
   actualPercent,
-  milestonePercent,
-  lifestyleTarget,
-  independentIncomeToday,
+  value,
+  onChange,
 }: {
   actualPercent: number;
-  milestonePercent: number;
-  lifestyleTarget: number;
-  independentIncomeToday: number;
+  value: number;
+  onChange: (percent: number) => void;
 }) {
-  const [dragPercent, setDragPercent] = useState<number | null>(null);
-  const isExploring = dragPercent !== null;
-  const displayPercent = dragPercent ?? milestonePercent;
-
-  const required = requiredIndependentIncomeForDependency(toMoney(lifestyleTarget), displayPercent);
-  const gap = clampMin(required.minus(toMoney(independentIncomeToday)));
-
   const actualPoint = pointFor(actualPercent);
-  const handlePoint = pointFor(displayPercent);
-
-  const endDrag = () => setDragPercent(null);
+  const handlePoint = pointFor(value);
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -84,13 +72,10 @@ export function DependencyDial({
           min={0}
           max={100}
           step={1}
-          value={displayPercent}
+          value={value}
           dir="rtl"
           aria-label="Explore a different employment dependency level"
-          onChange={(e) => setDragPercent(Number(e.target.value))}
-          onPointerUp={endDrag}
-          onKeyUp={endDrag}
-          onBlur={endDrag}
+          onChange={(e) => onChange(Number(e.target.value))}
           className="dial-range absolute inset-x-0 top-0 h-full w-full cursor-pointer"
         />
       </div>
@@ -104,18 +89,6 @@ export function DependencyDial({
         <p className="text-2xl font-extrabold tracking-tight">{actualPercent.toFixed(1)}%</p>
         <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
           Employment dependency today
-        </p>
-      </div>
-
-      <div className="w-full rounded-2xl border p-2 text-center" style={{ borderColor: "var(--color-border)", background: "var(--color-accent-soft)" }}>
-        <p className="text-[11px] font-medium" style={{ color: "var(--color-text-muted)" }}>
-          {isExploring ? `To reach ${displayPercent}% or below` : `Next milestone: below ${displayPercent}%`}
-        </p>
-        <p className="text-lg font-bold" style={{ color: "var(--color-accent-strong)" }}>
-          {formatCompactAUD(required)} p.a. needed
-        </p>
-        <p className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>
-          {gap.isZero() ? "Already there" : `${formatCompactAUD(gap)} more than today's ${formatCompactAUD(toMoney(independentIncomeToday))}`}
         </p>
       </div>
     </div>

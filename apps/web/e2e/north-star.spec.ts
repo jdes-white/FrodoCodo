@@ -83,39 +83,119 @@ for (const viewport of MOBILE_VIEWPORTS) {
   });
 }
 
-test.describe("North Star dependency dial", () => {
+/** Drags the invisible range-input dial to `percent`, then fires blur/
+ * pointerup too — DependencyDial no longer has any revert-on-release
+ * handler at all, but firing these anyway proves that stays true rather
+ * than merely "no test ever exercised release". */
+async function dragDialTo(page: Page, percent: number) {
+  const slider = page.locator('input[type="range"]');
+  await slider.evaluate((el: HTMLInputElement, value: number) => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(el, String(value));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("pointerup", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+  }, percent);
+}
+
+test.describe("North Star dependency dial — persistent scenario (§7)", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
-  test("dragging the dial explores a level without changing the actual stored dependency figure (§7)", async ({ page }) => {
+  test("dragging the dial commits a scenario that survives release, and never changes the actual stored figure", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await expect(page.getByText("Next milestone: below 90%")).toBeVisible();
+
+    const actualBefore = await page.getByText("Employment dependency today").locator("..").locator("p").first().textContent();
+
+    await dragDialTo(page, 30);
+
+    // The scenario readout replaces the live "next milestone" framing and stays put after release.
+    await expect(page.getByText("Scenario: 30% dependency")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reset · Live" })).toBeVisible();
+
+    // ...but the fixed "actual" figure on the dial never moves.
+    const actualAfter = await page.getByText("Employment dependency today").locator("..").locator("p").first().textContent();
+    expect(actualAfter).toBe(actualBefore);
+  });
+
+  test("supporting cells update to the selected scenario, matching the spec's worked example exactly", async ({ page }) => {
     await login(page);
     await page.goto("/north-star");
 
-    const actualBefore = await page
-      .getByText("Employment dependency today")
-      .locator("..")
-      .locator("p")
-      .first()
-      .textContent();
+    // Seed data: Lifestyle $190,000, current independent income $1,400.
+    // At 30% selected dependency: required $133,000, gap $131,600.
+    await dragDialTo(page, 30);
 
-    const slider = page.locator('input[type="range"]');
-    await slider.evaluate((el: HTMLInputElement) => {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
-      setter.call(el, "50");
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
+    await expect(page.getByText("$190,000.00").first()).toBeVisible(); // Lifestyle to fund — unchanged
+    await expect(page.getByText("required for 30% scenario")).toBeVisible();
+    await expect(page.getByText("$133,000.00")).toBeVisible(); // Independent income -> required income
+    await expect(page.getByText("30%", { exact: true })).toBeVisible(); // Dependency -> selected %
+    await expect(page.getByText("Income needed", { exact: true })).toBeVisible();
+    await expect(page.getByText("$131,600.00")).toBeVisible(); // replaces "Next milestone"
+    await expect(page.getByText("Exploring a 30% dependency scenario")).toBeVisible();
+  });
+
+  test("Page 1 -> Page 2 -> Page 1 preserves the selected scenario", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await dragDialTo(page, 30);
+    await expect(page.getByText("Scenario: 30% dependency")).toBeVisible();
+
+    await scrollToPanel2(page);
+    await expect(page.getByText("Build your engine")).toBeVisible();
+
+    await page.evaluate(() => {
+      const container = document.querySelectorAll("section")[0]?.parentElement;
+      container?.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
     });
+    await page.waitForTimeout(150);
 
-    // The readout card switches to the freely-dragged value while exploring...
-    await expect(page.getByText("To reach 50% or below")).toBeVisible();
+    await expect(page.getByText("Scenario: 30% dependency")).toBeVisible();
+  });
 
-    // ...but the actual figure elsewhere on the page never moves.
-    const actualAfter = await page
-      .getByText("Employment dependency today")
-      .locator("..")
-      .locator("p")
-      .first()
-      .textContent();
-    expect(actualAfter).toBe(actualBefore);
+  test("navigating to another primary destination resets the scenario to live", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await dragDialTo(page, 30);
+    await expect(page.getByText("Scenario: 30% dependency")).toBeVisible();
+
+    await page.getByRole("link", { name: "Home" }).click();
+    await expect(page).toHaveURL("/");
+
+    await page.getByRole("link", { name: /North Star/ }).click();
+    await expect(page).toHaveURL("/north-star");
+    await expect(page.getByText("Next milestone: below 90%")).toBeVisible();
+    await expect(page.getByText(/Scenario:/)).toHaveCount(0);
+  });
+
+  test("Reset · Live returns the dial and metrics to the actual current position", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await dragDialTo(page, 30);
+    await expect(page.getByText("Scenario: 30% dependency")).toBeVisible();
+
+    await page.getByRole("button", { name: "Reset · Live" }).click();
+
+    await expect(page.getByText("Next milestone: below 90%")).toBeVisible();
+    await expect(page.getByText("sustainable, per year")).toBeVisible();
+    await expect(page.getByText("lower is more independent")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reset · Live" })).toHaveCount(0);
+  });
+
+  test("no scenario value is persisted as a household assumption", async ({ page }) => {
+    await login(page);
+    await page.goto("/north-star");
+    await dragDialTo(page, 30);
+    await expect(page.getByText("Scenario: 30% dependency")).toBeVisible();
+
+    // A fresh server request (not just client navigation) must still show
+    // the household's real stored target — never the abandoned scenario.
+    await page.reload();
+    await scrollToPanel2(page);
+    const directionPair = page.locator("h3", { hasText: "Direction" }).locator("..").locator("div.grid").first();
+    await expect(directionPair.getByRole("button", { name: /Target dependency/ })).toContainText("0%");
   });
 });
 
