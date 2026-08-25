@@ -1,23 +1,43 @@
-import { formatAUD, percentage } from "@frodocodo/shared";
+import type { ReactNode } from "react";
+import { formatAUD, percentage, sumMoney } from "@frodocodo/shared";
 import { requireSession, getCurrentUser } from "@/lib/session";
 import { getBudgetSnapshot, type BucketSnapshot, type FlexibleBudgetSnapshot } from "@/lib/budgetSnapshot";
-import { derivePaceDifference, derivePaceStatus, paceStatusLabel, type PacingResult } from "@frodocodo/domain";
+import { listCommitments, commitmentsDueInPeriod } from "@/lib/commitments";
+import { derivePaceDifference, derivePaceStatus, paceStatusLabel, summarizeCommitments, type PacingResult } from "@frodocodo/domain";
 import { paceStatusColorVar, paceStatusSoftColorVar, paceGradientColor } from "@/lib/pacePosition";
 import { withRouteTiming } from "@/lib/perf";
 import { BucketCard } from "@/components/BucketCard";
 import { PacingRing } from "@/components/PacingRing";
 import { StatusPill } from "@/components/StatusPill";
 import { PagedPanels } from "@/components/PagedPanels";
+import { ComingUpCard, type ComingUpPreviewItem } from "@/components/ComingUpCard";
 
 const MUTED = { color: "var(--color-text-muted)" } as const;
 
+// Bounds the "Coming Up" preview regardless of how many commitments are
+// actually due this period — Home Page 2 must fit one viewport with no
+// internal scroll (see Panel2's doc comment), so the widget always shows
+// at most this many rows plus a "+N more" summary line.
+const COMING_UP_PREVIEW_COUNT = 2;
+
 export default async function DashboardPage() {
   const session = await requireSession();
-  const [user, snapshot] = await withRouteTiming("/", () =>
-    Promise.all([getCurrentUser(session), getBudgetSnapshot(session.householdId)]),
+  const [user, snapshot, commitments] = await withRouteTiming("/", () =>
+    Promise.all([getCurrentUser(session), getBudgetSnapshot(session.householdId), listCommitments(session.householdId)]),
   );
   const { totalPacing, flexibleBudget, buckets } = snapshot;
   const firstName = user.name.split(" ")[0] ?? user.name;
+
+  const dueCommitments = commitmentsDueInPeriod(commitments, snapshot.period);
+  const commitmentsSummary = summarizeCommitments(totalPacing.remaining, dueCommitments);
+  const previewItems: ComingUpPreviewItem[] = dueCommitments.slice(0, COMING_UP_PREVIEW_COUNT).map((c) => ({
+    id: c.id,
+    name: c.name,
+    dateDisplay: formatShortDate(c.expectedDate),
+    amountDisplay: formatAUD(c.amount),
+  }));
+  const overflow = dueCommitments.slice(COMING_UP_PREVIEW_COUNT);
+  const overflowAmountDisplay = overflow.length > 0 ? formatAUD(sumMoney(overflow.map((c) => c.amount))) : null;
 
   return (
     <PagedPanels
@@ -29,7 +49,22 @@ export default async function DashboardPage() {
           totalPacing={totalPacing}
           flexibleBudget={flexibleBudget}
         />,
-        <Panel2 key="panel-2" buckets={buckets} />,
+        <Panel2
+          key="panel-2"
+          buckets={buckets}
+          comingUp={
+            dueCommitments.length === 0 ? null : (
+              <ComingUpCard
+                items={previewItems}
+                overflowCount={overflow.length}
+                overflowAmountDisplay={overflowAmountDisplay}
+                committedDisplay={formatAUD(commitmentsSummary.committed)}
+                isShortfall={commitmentsSummary.isShortfall}
+                uncommittedDisplay={commitmentsSummary.isShortfall ? formatAUD(commitmentsSummary.shortfall) : formatAUD(commitmentsSummary.uncommitted)}
+              />
+            )
+          }
+        />,
       ]}
     />
   );
@@ -107,15 +142,17 @@ function Panel1({
 }
 
 /**
- * "Where's it going?" — the full bucket breakdown (§6). Compact enough
- * that this household's four buckets all fit one viewport with no clipped
- * fifth card and no internal scroll (BucketCard is a single tight row —
- * see components/BucketCard.tsx). A household with substantially more
- * than four buckets isn't accounted for yet; that would need this panel
- * to become scrollable or split further, deliberately deferred rather
- * than guessed at here.
+ * "Where's it going?" — the full bucket breakdown (§6), plus (below the
+ * buckets) the optional "Coming Up" widget from the Upcoming Commitments
+ * V1 spec — known bills still due this period and how much of what's left
+ * is already spoken for. `comingUp` arrives pre-rendered (or null) from
+ * the page component rather than this function computing it, so the
+ * "must fit one viewport, no internal scroll" constraint that already
+ * governed the bucket list stays enforced in exactly one place: the
+ * caller bounds the widget's preview rows before it ever gets here, and
+ * omits it outright for a household with nothing due.
  */
-function Panel2({ buckets }: { buckets: BucketSnapshot[] }) {
+function Panel2({ buckets, comingUp }: { buckets: BucketSnapshot[]; comingUp: ReactNode }) {
   return (
     <div className="flex h-full flex-col justify-center gap-2.5 px-4">
       {buckets.map((bucket) => (
@@ -126,6 +163,7 @@ function Panel2({ buckets }: { buckets: BucketSnapshot[] }) {
           No budget buckets are set up yet. Head to Plan to allocate this period&apos;s budget.
         </p>
       )}
+      {comingUp}
     </div>
   );
 }
@@ -140,4 +178,8 @@ function greeting(): string {
 function formatDateRange(start: string, end: string): string {
   const fmt = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-AU", { day: "numeric", month: "short", timeZone: "UTC" });
   return `${fmt(start)} – ${fmt(end)}`;
+}
+
+function formatShortDate(date: string): string {
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }

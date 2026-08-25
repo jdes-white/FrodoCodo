@@ -22,6 +22,11 @@ async function login(page: Page) {
   await page.getByLabel("Password").fill(ADMIN_PASSWORD);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL("/");
+  // page.evaluate() below doesn't auto-retry the way expect(locator) does,
+  // so it can run while app/(app)/loading.tsx's Suspense fallback (no
+  // <section> of its own) is still showing instead of the real panels —
+  // wait for the first real panel to actually be in the DOM first.
+  await page.locator("section").first().waitFor();
 }
 
 for (const viewport of MOBILE_VIEWPORTS) {

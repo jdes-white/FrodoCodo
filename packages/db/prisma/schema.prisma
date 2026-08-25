@@ -169,6 +169,18 @@ enum IncomeFrequency {
   IRREGULAR
 }
 
+// A manually-entered commitment's optional repeat cadence (§5 of the
+// Upcoming Commitments V1 spec) — deliberately just these three, matching
+// IncomeFrequency's cadence vocabulary minus IRREGULAR (a commitment either
+// repeats on a fixed cadence or it doesn't; there's no "irregular
+// commitment" concept). Null on UpcomingCommitment.recurrence means
+// one-off, not "unset".
+enum CommitmentRecurrence {
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+}
+
 // ---------- Household & users ----------
 
 model User {
@@ -186,6 +198,7 @@ model User {
   notificationPreferences NotificationPreference[]
   classifications TransactionClassification[]
   merchantRules   MerchantRule[]
+  createdCommitments UpcomingCommitment[]
 }
 
 model Household {
@@ -213,6 +226,7 @@ model Household {
   merchants          Merchant[]
   merchantRules      MerchantRule[]
   northStarAssumptions NorthStarAssumptions?
+  upcomingCommitments UpcomingCommitment[]
 }
 
 model HouseholdMember {
@@ -464,6 +478,38 @@ model SavingsGoal {
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
   category  Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+}
+
+// ---------- Upcoming Commitments (manually-tracked known bills, V1) ----------
+
+// A household-maintained forecast item — "we know this bill is coming" —
+// deliberately separate from Transaction (something that actually
+// happened) and from FixedCommitment (a category-level pacing hint used by
+// packages/domain/src/pacing.ts's step-function expected-spend curve).
+// This one drives Home's "Coming Up" widget only: how much of what's left
+// this budget period is already spoken for by bills the household knows
+// about but hasn't paid yet. See apps/web/lib/commitments.ts and
+// packages/domain/src/commitments.ts for the read/calculation logic this
+// feeds.
+model UpcomingCommitment {
+  id              String                @id @default(cuid())
+  householdId     String
+  name            String
+  amount          Decimal               @db.Decimal(14, 2)
+  expectedDate    DateTime              @db.Date
+  // Null = one-off. Set = "when marked paid, create the next occurrence"
+  // (apps/web/app/(app)/commitments/actions.ts) — cheap, manual recurrence
+  // per §5 of the spec, not pattern detection from transaction history.
+  recurrence      CommitmentRecurrence?
+  completedAt     DateTime?
+  createdByUserId String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([householdId, expectedDate])
 }
 
 // ---------- Transactions (canonical model, spec §9) ----------

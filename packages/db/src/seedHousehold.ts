@@ -386,6 +386,32 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
   ];
   if (updates.length > 0) await prisma.$transaction(updates);
 
+  log("Seeding upcoming commitments...");
+  // Demo data for the Upcoming Commitments V1 widget (Home Page 2's
+  // "Coming Up" card) — offsets from today rather than fixed calendar
+  // days, so re-seeding always produces a realistic mix regardless of
+  // when it's run: two due later this period, one far enough out to land
+  // in the next period (demonstrating "stored but inert" §4 behaviour),
+  // and one already paid (demonstrating it stops counting immediately).
+  const todayDate = new Date(`${todayUTC()}T00:00:00Z`);
+  const offsetDate = (days: number) => new Date(todayDate.getTime() + days * 86_400_000);
+  await prisma.upcomingCommitment.createMany({
+    data: [
+      { householdId: household.id, name: "Mortgage", amount: 2400, expectedDate: offsetDate(3), recurrence: "MONTHLY", createdByUserId: admin.id },
+      { householdId: household.id, name: "Insurance", amount: 130, expectedDate: offsetDate(7), recurrence: "MONTHLY", createdByUserId: admin.id },
+      { householdId: household.id, name: "Streaming annual renewal", amount: 139, expectedDate: offsetDate(40), recurrence: null, createdByUserId: member.id },
+      {
+        householdId: household.id,
+        name: "Gym membership",
+        amount: 60,
+        expectedDate: offsetDate(-4),
+        recurrence: "MONTHLY",
+        completedAt: offsetDate(-4),
+        createdByUserId: member.id,
+      },
+    ],
+  });
+
   log("Done.");
 
   return {
