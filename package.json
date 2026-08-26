@@ -17,6 +17,7 @@
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @frodocodo/db generate",
     "db:migrate": "pnpm --filter @frodocodo/db migrate",
+    "db:migrate:deploy": "pnpm --filter @frodocodo/db migrate:deploy",
     "db:seed": "pnpm --filter @frodocodo/db seed",
     "db:up": "docker compose up -d postgres"
   },

@@ -162,7 +162,12 @@ test.describe("Upcoming Commitments V1", () => {
   test("both household users see and can maintain the same commitments", async ({ page }) => {
     await addCommitment(page, { name: "E2E Shared Bill", amount: "42", days: 3 });
 
+    // Sign out is a server-action form submit that redirects to /login —
+    // wait for that navigation to actually land before logging back in as
+    // the other user, otherwise login()'s own page.goto("/login") can race
+    // the in-flight redirect and hit the still-authenticated page instead.
     await page.getByRole("button", { name: "Sign out" }).click();
+    await page.waitForURL("**/login");
     await login(page, MEMBER_EMAIL, MEMBER_PASSWORD);
     await page.goto("/commitments");
     await expect(page.getByText("E2E Shared Bill", { exact: true })).toBeVisible();
