@@ -110,12 +110,12 @@ spec's non-negotiables — the short version is below.
   Vercel's tracer isn't trusted anymore. See `docs/deployment.md`.
 - **`apps/web/scripts/start.sh` runs `prisma migrate deploy` before
   starting Next.js, and a failed migration must block the release.**
-  `set -e` at the top of the script is the entire mechanism: if
-  `migrate:deploy` exits non-zero, the script exits too, `exec next
-  start` never runs, the container never opens its port, and Render's
-  standard health-check-gated zero-downtime deploy keeps the previous
-  working release live instead of replacing it. This is deliberately NOT
-  a by-hand step against Neon — two separate incidents (North Star, then
+  `set -e` at the top of the script is the entire mechanism: if the
+  migration exits non-zero, the script exits too, `exec next start`
+  never runs, the container never opens its port, and Render's standard
+  health-check-gated zero-downtime deploy keeps the previous working
+  release live instead of replacing it. This is deliberately NOT a
+  by-hand step against Neon — two separate incidents (North Star, then
   Upcoming Commitments) shipped application code before their migration
   had been applied by hand, and both crashed production (the second one
   took down the entire app, not just the new feature, since Home queries
@@ -126,9 +126,18 @@ spec's non-negotiables — the short version is below.
   clean shutdown, just now as the step after migrations rather than the
   script's very first line. `migrate deploy` is safe under concurrent
   multi-instance startup — it takes a Postgres advisory lock, so a second
-  instance just waits and then sees nothing pending. See
-  `docs/deployment.md`'s "Migrations" section for the full incident
-  history and reasoning.
+  instance just waits and then sees nothing pending.
+  **Invokes `node_modules/.bin/prisma` directly — never `pnpm run`/`pnpm
+  --filter` inside this script.** A `pnpm`-based version of this line
+  shipped first and broke every production deploy: the container's
+  runtime user (`frodocodo`, a `useradd --system` account with no home
+  directory) has nowhere for Corepack to create its pinned-version
+  download cache, so any `pnpm` invocation — even just to run a
+  package-local script — fails with `EACCES`/`mkdir` on
+  `$HOME/.cache/node/corepack`. `apps/web/package.json` lists `prisma`
+  as a devDependency specifically so this direct binary call works with
+  no package manager involved at all. See `docs/deployment.md`'s
+  "Migrations" section for the full incident history and reasoning.
 - `packages/db/package.json`'s `"postinstall": "prisma generate"` is what
   makes the Prisma Client exist after `pnpm install` on a machine that's
   never run `prisma generate` manually (every CI/deploy environment,

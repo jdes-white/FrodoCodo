@@ -191,11 +191,11 @@ run a command against Neon before or after a deploy.
 
 ```sh
 set -e
-pnpm --filter @frodocodo/db run migrate:deploy   # prisma migrate deploy
+node_modules/.bin/prisma migrate deploy --schema=../../packages/db/prisma/schema.prisma
 exec node_modules/.bin/next start
 ```
 
-`set -e` means if `migrate:deploy` exits non-zero for any reason — a
+`set -e` means if `migrate deploy` exits non-zero for any reason — a
 broken migration, a missing `DIRECT_URL`, a database that's briefly
 unreachable — this script exits immediately too. `exec next start` never
 runs, the container never opens its port, and Render's own health check
@@ -211,6 +211,26 @@ own step rather than inside the app container) but isn't worth the
 required plan upgrade for a two-user beta. Revisit `preDeployCommand` if
 this service ever moves off the Free plan for other reasons (see "Future
 architecture awareness").
+
+**Invoke the `prisma` binary directly — never `pnpm run`/`pnpm --filter`
+here.** The first version of this script ran
+`pnpm --filter @frodocodo/db run migrate:deploy` and broke every
+production deploy: the container's runtime user (Dockerfile's
+`frodocodo`, a `useradd --system` account with no home directory, under
+a non-writable `/home`) has nowhere for Corepack to create its
+version-download cache, and invoking `pnpm` at all — even just to run a
+package-local script — routes through Corepack's shim, which tries to
+download/cache the exact `packageManager`-pinned pnpm version
+(root `package.json`) before doing anything else. That failed with
+`EACCES`/`mkdir` on `$HOME/.cache/node/corepack/v1` and took the whole
+container down before Next.js ever started. `apps/web/package.json`
+already lists `prisma` as a devDependency specifically so its own
+`node_modules/.bin/prisma` exists in the built image — calling that
+directly, with an explicit `--schema` path into `packages/db` (since the
+script's cwd is `apps/web`, not `packages/db`), needs no package
+manager, no Corepack, and no cache directory at all. This is the same
+reasoning that already governs `next start` below — see the `exec`
+comment.
 
 Only ever `prisma migrate deploy` here — never `migrate dev` (development
 -only, can prompt interactively and can be destructive), `db push`
