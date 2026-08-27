@@ -1,7 +1,26 @@
 #!/bin/sh
 # Container entrypoint (invoked by the Dockerfile's CMD, from WORKDIR
-# /app/apps/web): apply any pending database migrations, then hand off to
-# Next.js — but only if the migration step actually succeeded.
+# /app/apps/web): reconcile one known historical migration-state incident,
+# apply any pending database migrations, then hand off to Next.js — but
+# only if every step actually succeeded.
+#
+# `reconcile-known-failed-migrations.mjs` (packages/db/scripts/) exists for
+# exactly one incident: `20260822113229_add_north_star_assumptions` was
+# recorded as FAILED the first time automatic migrations ran, because a
+# now-obsolete self-heal (apps/web/lib/northStar.ts's
+# ensureNorthStarTable()) had already created that same table out of band
+# months earlier, back when migrations were still applied by hand. Once a
+# migration is recorded as failed, every subsequent `prisma migrate
+# deploy` refuses outright with P3009 and never even looks at later
+# migrations — so this has to be resolved before the real migrate step
+# below can do anything. The script verifies the existing table's columns/
+# index/constraint actually match what that migration would have created
+# before resolving it (`prisma migrate resolve --applied`, which only
+# updates migration bookkeeping — it runs no SQL and cannot touch data);
+# if they don't match, it exits non-zero and changes nothing, same as any
+# other failure here. It's a no-op once resolved (or if this database
+# never hit the incident at all), so it's safe to leave running on every
+# container start rather than needing to be removed after one deploy.
 #
 # `set -e` is the whole safety mechanism here: `node_modules/.bin/prisma
 # migrate deploy` runs first; if it exits non-zero for any reason — a
@@ -46,6 +65,9 @@
 # being Node itself, and SIGTERM reaches it directly instead of being
 # swallowed by a wrapper shell.
 set -e
+
+echo "[start] reconciling known historical migration state..."
+node ../../packages/db/scripts/reconcile-known-failed-migrations.mjs
 
 echo "[start] applying database migrations..."
 node_modules/.bin/prisma migrate deploy --schema=../../packages/db/prisma/schema.prisma

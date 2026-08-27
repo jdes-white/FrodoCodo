@@ -136,7 +136,22 @@ spec's non-negotiables — the short version is below.
   package-local script — fails with `EACCES`/`mkdir` on
   `$HOME/.cache/node/corepack`. `apps/web/package.json` lists `prisma`
   as a devDependency specifically so this direct binary call works with
-  no package manager involved at all. See `docs/deployment.md`'s
+  no package manager involved at all.
+  **`start.sh` runs `packages/db/scripts/reconcile-known-failed-migrations.mjs`
+  immediately before `migrate deploy`, every time.** This resolves one
+  specific historical incident — a self-heal (see
+  `apps/web/lib/northStar.ts`'s now-obsolete `ensureNorthStarTable()`)
+  created the `NorthStarAssumptions` table out of band before automatic
+  migrations existed, so the real migration failed with "relation already
+  exists" the first time `migrate deploy` ran for real, and every
+  `migrate deploy` since refused outright with P3009 — blocking later,
+  genuinely-pending migrations too. The script verifies the existing
+  schema actually matches what that migration would have created before
+  running `prisma migrate resolve --applied` (bookkeeping only, no SQL,
+  cannot touch data); it refuses and exits non-zero rather than guessing
+  if the schema doesn't match. It's a no-op on any database that never
+  hit this incident, so it's safe to leave running permanently rather
+  than needing to be removed later. See `docs/deployment.md`'s
   "Migrations" section for the full incident history and reasoning.
 - `packages/db/package.json`'s `"postinstall": "prisma generate"` is what
   makes the Prisma Client exist after `pnpm install` on a machine that's

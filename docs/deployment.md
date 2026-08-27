@@ -191,14 +191,18 @@ run a command against Neon before or after a deploy.
 
 ```sh
 set -e
+node ../../packages/db/scripts/reconcile-known-failed-migrations.mjs
 node_modules/.bin/prisma migrate deploy --schema=../../packages/db/prisma/schema.prisma
 exec node_modules/.bin/next start
 ```
 
-`set -e` means if `migrate deploy` exits non-zero for any reason — a
-broken migration, a missing `DIRECT_URL`, a database that's briefly
-unreachable — this script exits immediately too. `exec next start` never
-runs, the container never opens its port, and Render's own health check
+The `reconcile-known-failed-migrations.mjs` step exists for one specific
+historical incident (see "Incident precedent" below, point 3) — it's a
+no-op for any database that never hit it. `set -e` means if either that
+step or `migrate deploy` exits non-zero for any reason — a broken
+migration, a missing `DIRECT_URL`, a database that's briefly unreachable
+— this script exits immediately too. `exec next start` never runs, the
+container never opens its port, and Render's own health check
 (`healthCheckPath: /api/health` in `render.yaml`, and the Dockerfile's
 own `HEALTHCHECK`) never passes. Render's standard zero-downtime deploy
 behavior then does the rest with no extra configuration: it cancels the
@@ -274,6 +278,25 @@ both crashed production:
    as defense-in-depth: automatic migration should mean the table always
    exists by the time the app starts, but a missing additive table should
    still never take down the whole app if that assumption is ever wrong.
+3. The very first automatic-migration deploy hit a third, different
+   failure mode: `20260822113229_add_north_star_assumptions`'s self-heal
+   (previous point) had already created the `NorthStarAssumptions` table
+   out of band, so when `prisma migrate deploy` tried to run that
+   migration's `CREATE TABLE` for real, Postgres rejected it with `42P07`
+   ("relation already exists") and Prisma recorded the migration as
+   **failed**. Every subsequent `migrate deploy` then refused outright
+   with `P3009` ("found failed migrations in the target database, new
+   migrations will not be applied") — which also blocked the unrelated,
+   genuinely-pending Upcoming Commitments migration from ever being
+   reached. `packages/db/scripts/reconcile-known-failed-migrations.mjs`
+   (invoked by `start.sh` immediately before `migrate deploy` — see
+   "Migrations" above) resolves exactly this one historical incident: it
+   verifies the existing table's columns/index/constraint actually match
+   what that migration would have created, and only then runs
+   `prisma migrate resolve --applied` (pure bookkeeping, no SQL, cannot
+   touch data) to clear the failed state. It refuses and exits non-zero
+   if the schema doesn't match — it will never blindly mark a failed
+   migration applied.
 
 ## Health checks
 
