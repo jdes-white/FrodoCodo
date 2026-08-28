@@ -4,9 +4,11 @@ import { resolveBudgetPeriod, isCommitmentDueInPeriod } from "@frodocodo/domain"
 import { requireSession } from "@/lib/session";
 import { getHousehold } from "@/lib/household";
 import { listCommitments, type CommitmentView } from "@/lib/commitments";
+import { listCategoriesWithBuckets } from "@/lib/categories";
 import { withRouteTiming } from "@/lib/perf";
 import { AddCommitmentCard } from "./AddCommitmentCard";
 import { CommitmentCard, type CommitmentCardData } from "./CommitmentCard";
+import type { CategoryOption } from "./CommitmentFormFields";
 
 const MUTED = { color: "var(--color-text-muted)" } as const;
 
@@ -18,9 +20,10 @@ const MUTED = { color: "var(--color-text-muted)" } as const;
  */
 export default async function CommitmentsPage() {
   const session = await requireSession();
-  const [household, commitments] = await withRouteTiming("/commitments", () =>
-    Promise.all([getHousehold(session.householdId), listCommitments(session.householdId)]),
+  const [household, commitments, categoryRows] = await withRouteTiming("/commitments", () =>
+    Promise.all([getHousehold(session.householdId), listCommitments(session.householdId), listCategoriesWithBuckets(session.householdId)]),
   );
+  const categories: CategoryOption[] = categoryRows.map((c) => ({ id: c.id, name: c.name, bucketName: c.bucket.name }));
 
   const period = resolveBudgetPeriod(
     { type: household.defaultBudgetPeriodType, anchorDay: household.budgetAnchorDay ?? undefined },
@@ -45,11 +48,13 @@ export default async function CommitmentsPage() {
         </p>
       </div>
 
-      <AddCommitmentCard />
+      <AddCommitmentCard categories={categories} />
 
-      {dueThisPeriod.length > 0 && <CommitmentSection title={`Due this period (${formatDateRange(period.startDate, period.endDate)})`} commitments={dueThisPeriod} />}
-      {later.length > 0 && <CommitmentSection title="Later" commitments={later} />}
-      {completed.length > 0 && <CommitmentSection title="Paid" commitments={completed} />}
+      {dueThisPeriod.length > 0 && (
+        <CommitmentSection title={`Due this period (${formatDateRange(period.startDate, period.endDate)})`} commitments={dueThisPeriod} categories={categories} />
+      )}
+      {later.length > 0 && <CommitmentSection title="Later" commitments={later} categories={categories} />}
+      {completed.length > 0 && <CommitmentSection title="Paid" commitments={completed} categories={categories} />}
 
       {commitments.length === 0 && (
         <p className="text-sm" style={MUTED}>
@@ -60,7 +65,7 @@ export default async function CommitmentsPage() {
   );
 }
 
-function CommitmentSection({ title, commitments }: { title: string; commitments: CommitmentView[] }) {
+function CommitmentSection({ title, commitments, categories }: { title: string; commitments: CommitmentView[]; categories: CategoryOption[] }) {
   return (
     <section>
       <h2 className="mb-2 text-sm font-medium" style={MUTED}>
@@ -68,7 +73,7 @@ function CommitmentSection({ title, commitments }: { title: string; commitments:
       </h2>
       <div className="flex flex-col gap-2">
         {commitments.map((c) => (
-          <CommitmentCard key={c.id} commitment={toCardData(c)} />
+          <CommitmentCard key={c.id} commitment={toCardData(c)} categories={categories} />
         ))}
       </div>
     </section>
@@ -78,6 +83,7 @@ function CommitmentSection({ title, commitments }: { title: string; commitments:
 function toCardData(c: CommitmentView): CommitmentCardData {
   return {
     id: c.id,
+    categoryId: c.categoryId,
     name: c.name,
     amount: c.amount.toNumber(),
     amountDisplay: formatAUD(c.amount),

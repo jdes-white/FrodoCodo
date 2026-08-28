@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { isCommitmentDueInPeriod, summarizeCommitments, nextRecurrenceDate } from "../commitments.js";
+import {
+  isCommitmentDueInPeriod,
+  summarizeCommitments,
+  nextRecurrenceDate,
+  isCommitmentDueWithinWindow,
+  commitmentsDueWithinWindow,
+  summarizeUpcomingWindow,
+} from "../commitments.js";
 
 const PERIOD = { startDate: "2026-08-01", endDate: "2026-08-31" };
+const TODAY = "2026-08-28";
 
 describe("isCommitmentDueInPeriod", () => {
   it("counts an unpaid commitment whose date falls inside the period", () => {
@@ -67,6 +75,79 @@ describe("summarizeCommitments", () => {
     expect(summary.committed.toNumber()).toBe(0);
     expect(summary.uncommitted.toNumber()).toBe(2236);
     expect(summary.isShortfall).toBe(false);
+  });
+});
+
+describe("isCommitmentDueWithinWindow / commitmentsDueWithinWindow", () => {
+  it("includes a commitment due today and one due exactly on the window boundary", () => {
+    expect(isCommitmentDueWithinWindow({ amount: 1, expectedDate: TODAY, completedAt: null }, TODAY, 7)).toBe(true);
+    expect(isCommitmentDueWithinWindow({ amount: 1, expectedDate: "2026-09-04", completedAt: null }, TODAY, 7)).toBe(true);
+  });
+
+  it("excludes a commitment one day past the window", () => {
+    expect(isCommitmentDueWithinWindow({ amount: 1, expectedDate: "2026-09-05", completedAt: null }, TODAY, 7)).toBe(false);
+  });
+
+  it("excludes a commitment already in the past", () => {
+    expect(isCommitmentDueWithinWindow({ amount: 1, expectedDate: "2026-08-27", completedAt: null }, TODAY, 7)).toBe(false);
+  });
+
+  it("excludes a completed commitment even if its date is inside the window", () => {
+    expect(isCommitmentDueWithinWindow({ amount: 1, expectedDate: TODAY, completedAt: "2026-08-20" }, TODAY, 7)).toBe(false);
+  });
+
+  it("filters and sorts soonest-first", () => {
+    const commitments = [
+      { amount: 240, expectedDate: "2026-09-01", completedAt: null },
+      { amount: 999, expectedDate: "2026-09-20", completedAt: null }, // outside window
+      { amount: 180, expectedDate: "2026-08-29", completedAt: null },
+    ];
+    const due = commitmentsDueWithinWindow(commitments, TODAY, 7);
+    expect(due.map((c) => c.expectedDate)).toEqual(["2026-08-29", "2026-09-01"]);
+  });
+});
+
+describe("summarizeUpcomingWindow", () => {
+  it("returns a null phrase and zero total when nothing is due", () => {
+    const summary = summarizeUpcomingWindow([], TODAY, 7);
+    expect(summary.count).toBe(0);
+    expect(summary.total.toNumber()).toBe(0);
+    expect(summary.phrase).toBeNull();
+  });
+
+  it("says 'due tomorrow' for a single item one day out", () => {
+    const summary = summarizeUpcomingWindow([{ amount: 180, expectedDate: "2026-08-29", completedAt: null }], TODAY, 7);
+    expect(summary.total.toNumber()).toBe(180);
+    expect(summary.phrase).toBe("due tomorrow");
+  });
+
+  it("says 'due today' for a single item due today", () => {
+    const summary = summarizeUpcomingWindow([{ amount: 50, expectedDate: TODAY, completedAt: null }], TODAY, 7);
+    expect(summary.phrase).toBe("due today");
+  });
+
+  it("says 'due in N days' for a single item inside the window but not at its edge", () => {
+    const summary = summarizeUpcomingWindow([{ amount: 240, expectedDate: "2026-09-01", completedAt: null }], TODAY, 7);
+    expect(summary.phrase).toBe("due in 4 days");
+  });
+
+  it("says 'due in the next N days' for a single item exactly on the window boundary", () => {
+    const summary = summarizeUpcomingWindow([{ amount: 560, expectedDate: "2026-09-04", completedAt: null }], TODAY, 7);
+    expect(summary.phrase).toBe("due in the next 7 days");
+  });
+
+  it("collapses multiple items to the window-boundary phrase and sums the total, regardless of their individual dates", () => {
+    const summary = summarizeUpcomingWindow(
+      [
+        { amount: 180, expectedDate: "2026-08-29", completedAt: null },
+        { amount: 240, expectedDate: "2026-09-01", completedAt: null },
+      ],
+      TODAY,
+      7,
+    );
+    expect(summary.count).toBe(2);
+    expect(summary.total.toNumber()).toBe(420);
+    expect(summary.phrase).toBe("due in the next 7 days");
   });
 });
 

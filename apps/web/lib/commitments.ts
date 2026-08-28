@@ -2,7 +2,7 @@ import "server-only";
 import { prisma, sanitizeDbError, logDbEvent } from "@frodocodo/db";
 import type { UpcomingCommitment as UpcomingCommitmentRow } from "@frodocodo/db";
 import { formatCalendarDate, type CalendarDate, type Money } from "@frodocodo/shared";
-import { isCommitmentDueInPeriod, type BudgetPeriodBounds, type CommitmentRecurrence } from "@frodocodo/domain";
+import { isCommitmentDueInPeriod, commitmentsDueWithinWindow, type BudgetPeriodBounds, type CommitmentRecurrence } from "@frodocodo/domain";
 import { fromPrismaDecimal } from "./decimal";
 
 /**
@@ -26,6 +26,10 @@ export function isMissingCommitmentsTableError(error: unknown): boolean {
 
 export interface CommitmentView {
   id: string;
+  // Null covers commitments created before this field existed — the
+  // category-must-be-chosen-explicitly rule (never inferred from
+  // transaction history) only applies going forward, at add/edit time.
+  categoryId: string | null;
   name: string;
   amount: Money;
   expectedDate: CalendarDate;
@@ -36,6 +40,7 @@ export interface CommitmentView {
 function toView(row: UpcomingCommitmentRow): CommitmentView {
   return {
     id: row.id,
+    categoryId: row.categoryId,
     name: row.name,
     amount: fromPrismaDecimal(row.amount),
     expectedDate: formatCalendarDate(row.expectedDate),
@@ -75,4 +80,20 @@ export function commitmentsDueInPeriod(commitments: CommitmentView[], period: Bu
   return commitments
     .filter((c) => isCommitmentDueInPeriod(c, period))
     .sort((a, b) => a.expectedDate.localeCompare(b.expectedDate));
+}
+
+/**
+ * The Home Page 2 bucket-card integration's rolling look-ahead — unpaid,
+ * category-assigned commitments due within `windowDays` of `asOf`,
+ * regardless of budget-period boundaries. A commitment with no category
+ * (created before this field existed, or never assigned one) can't be
+ * attributed to a bucket, so it's excluded here — it still appears on the
+ * full /commitments list untouched.
+ */
+export function commitmentsDueWithinDays(commitments: CommitmentView[], asOf: CalendarDate, windowDays: number): CommitmentView[] {
+  return commitmentsDueWithinWindow(
+    commitments.filter((c) => c.categoryId !== null),
+    asOf,
+    windowDays,
+  );
 }

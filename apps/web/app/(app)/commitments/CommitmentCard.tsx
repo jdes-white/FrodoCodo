@@ -4,13 +4,14 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/Card";
 import { updateCommitment, deleteCommitment, completeCommitment } from "./actions";
-import { CommitmentFormFields } from "./CommitmentFormFields";
+import { CommitmentFormFields, type CategoryOption } from "./CommitmentFormFields";
 
 const MUTED = { color: "var(--color-text-muted)" } as const;
 const RECURRENCE_LABEL: Record<string, string> = { WEEKLY: "Weekly", FORTNIGHTLY: "Fortnightly", MONTHLY: "Monthly" };
 
 export interface CommitmentCardData {
   id: string;
+  categoryId: string | null;
   name: string;
   amount: number;
   amountDisplay: string;
@@ -30,7 +31,7 @@ export interface CommitmentCardData {
  * submission, so this component controls exactly when it collapses back
  * to the compact view.
  */
-export function CommitmentCard({ commitment }: { commitment: CommitmentCardData }) {
+export function CommitmentCard({ commitment, categories }: { commitment: CommitmentCardData; categories: CategoryOption[] }) {
   const [expanded, setExpanded] = useState(false);
 
   if (!expanded) {
@@ -62,15 +63,16 @@ export function CommitmentCard({ commitment }: { commitment: CommitmentCardData 
     );
   }
 
-  return <ExpandedCommitmentCard commitment={commitment} onDone={() => setExpanded(false)} />;
+  return <ExpandedCommitmentCard commitment={commitment} categories={categories} onDone={() => setExpanded(false)} />;
 }
 
-function ExpandedCommitmentCard({ commitment, onDone }: { commitment: CommitmentCardData; onDone: () => void }) {
+function ExpandedCommitmentCard({ commitment, categories, onDone }: { commitment: CommitmentCardData; categories: CategoryOption[]; onDone: () => void }) {
   const router = useRouter();
   const [name, setName] = useState(commitment.name);
   const [amount, setAmount] = useState(String(commitment.amount));
   const [expectedDate, setExpectedDate] = useState(commitment.expectedDate);
   const [recurrence, setRecurrence] = useState(commitment.recurrence ?? "");
+  const [categoryId, setCategoryId] = useState(commitment.categoryId ?? "");
   const [pending, setPending] = useState(false);
   const isCompleted = commitment.completedAt !== null;
 
@@ -93,6 +95,7 @@ function ExpandedCommitmentCard({ commitment, onDone }: { commitment: Commitment
       formData.set("amount", amount);
       formData.set("expectedDate", expectedDate);
       formData.set("recurrence", recurrence);
+      formData.set("categoryId", categoryId);
       await updateCommitment(formData);
     });
   }
@@ -120,17 +123,20 @@ function ExpandedCommitmentCard({ commitment, onDone }: { commitment: Commitment
         amount={amount}
         expectedDate={expectedDate}
         recurrence={recurrence}
+        categoryId={categoryId}
+        categories={categories}
         onNameChange={setName}
         onAmountChange={setAmount}
         onExpectedDateChange={setExpectedDate}
         onRecurrenceChange={setRecurrence}
+        onCategoryChange={setCategoryId}
       />
 
       <div className="flex gap-2">
         <button
           type="button"
           onClick={handleSave}
-          disabled={pending || !name.trim() || !(Number(amount) > 0) || !expectedDate}
+          disabled={pending || !name.trim() || !(Number(amount) > 0) || !expectedDate || !categoryId}
           className="flex-1 rounded-lg px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
           style={{ background: "var(--color-accent)" }}
         >

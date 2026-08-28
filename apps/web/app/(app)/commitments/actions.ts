@@ -31,18 +31,34 @@ function parseAmount(value: FormDataEntryValue | null): number | null {
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
+/**
+ * The commitment's category must come from the household explicitly
+ * choosing one on the form — never inferred from transaction history (see
+ * packages/domain/src/commitments.ts's doc comments). An empty selection
+ * is treated the same as a missing required field: the form's own Add/Save
+ * button is already disabled until a category is chosen (see
+ * CommitmentFormFields.tsx), so this is a defensive floor, not the primary
+ * validation.
+ */
+function parseCategoryId(value: FormDataEntryValue | null): string | null {
+  const categoryId = String(value ?? "").trim();
+  return categoryId.length > 0 ? categoryId : null;
+}
+
 export async function addCommitment(formData: FormData): Promise<void> {
   const session = await requireSession();
   const name = String(formData.get("name") ?? "").trim();
   const amount = parseAmount(formData.get("amount"));
   const expectedDate = String(formData.get("expectedDate") ?? "");
   const recurrence = parseRecurrence(formData.get("recurrence"));
-  if (!name || !amount || !expectedDate) return;
+  const categoryId = parseCategoryId(formData.get("categoryId"));
+  if (!name || !amount || !expectedDate || !categoryId) return;
 
   try {
     const created = await prisma.upcomingCommitment.create({
       data: {
         householdId: session.householdId,
+        categoryId,
         name,
         amount,
         expectedDate: new Date(expectedDate),
@@ -57,7 +73,7 @@ export async function addCommitment(formData: FormData): Promise<void> {
       action: "ADD_COMMITMENT",
       entityType: "UpcomingCommitment",
       entityId: created.id,
-      metadata: { name, amount, expectedDate, recurrence },
+      metadata: { name, amount, expectedDate, recurrence, categoryId },
     });
   } catch (error) {
     if (!isMissingCommitmentsTableError(error)) throw error;
@@ -74,12 +90,13 @@ export async function updateCommitment(formData: FormData): Promise<void> {
   const amount = parseAmount(formData.get("amount"));
   const expectedDate = String(formData.get("expectedDate") ?? "");
   const recurrence = parseRecurrence(formData.get("recurrence"));
-  if (!name || !amount || !expectedDate) return;
+  const categoryId = parseCategoryId(formData.get("categoryId"));
+  if (!name || !amount || !expectedDate || !categoryId) return;
 
   try {
     const { count } = await prisma.upcomingCommitment.updateMany({
       where: { id, householdId: session.householdId },
-      data: { name, amount, expectedDate: new Date(expectedDate), recurrence },
+      data: { name, amount, expectedDate: new Date(expectedDate), recurrence, categoryId },
     });
     if (count === 0) return;
 
@@ -89,7 +106,7 @@ export async function updateCommitment(formData: FormData): Promise<void> {
       action: "UPDATE_COMMITMENT",
       entityType: "UpcomingCommitment",
       entityId: id,
-      metadata: { name, amount, expectedDate, recurrence },
+      metadata: { name, amount, expectedDate, recurrence, categoryId },
     });
   } catch (error) {
     if (!isMissingCommitmentsTableError(error)) throw error;
@@ -152,6 +169,7 @@ export async function completeCommitment(formData: FormData): Promise<void> {
       const created = await prisma.upcomingCommitment.create({
         data: {
           householdId: session.householdId,
+          categoryId: commitment.categoryId,
           name: commitment.name,
           amount: commitment.amount,
           expectedDate: new Date(nextDate),

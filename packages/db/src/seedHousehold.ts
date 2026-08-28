@@ -387,21 +387,51 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
   if (updates.length > 0) await prisma.$transaction(updates);
 
   log("Seeding upcoming commitments...");
-  // Demo data for the Upcoming Commitments V1 widget (Home Page 2's
-  // "Coming Up" card) — offsets from today rather than fixed calendar
-  // days, so re-seeding always produces a realistic mix regardless of
-  // when it's run: two due later this period, one far enough out to land
-  // in the next period (demonstrating "stored but inert" §4 behaviour),
-  // and one already paid (demonstrating it stops counting immediately).
+  // Demo data for the Upcoming Commitments V1 widget — offsets from today
+  // rather than fixed calendar days, so re-seeding always produces a
+  // realistic mix regardless of when it's run: two due within the next 7
+  // days (demonstrating Home Page 2's bucket-card due line — both land in
+  // the "essentials" bucket, so that card also demonstrates the
+  // multi-item "due in the next 7 days" wording), one far enough out to
+  // land in the next budget period (demonstrating "stored but inert" §4
+  // behaviour, and outside the 7-day window either way), and one already
+  // paid (demonstrating it stops counting immediately). categoryId ties
+  // each into the bucket it should surface under; a household-created
+  // commitment always requires this choice explicitly (never inferred).
   const todayDate = new Date(`${todayUTC()}T00:00:00Z`);
   const offsetDate = (days: number) => new Date(todayDate.getTime() + days * 86_400_000);
   await prisma.upcomingCommitment.createMany({
     data: [
-      { householdId: household.id, name: "Mortgage", amount: 2400, expectedDate: offsetDate(3), recurrence: "MONTHLY", createdByUserId: admin.id },
-      { householdId: household.id, name: "Insurance", amount: 130, expectedDate: offsetDate(7), recurrence: "MONTHLY", createdByUserId: admin.id },
-      { householdId: household.id, name: "Streaming annual renewal", amount: 139, expectedDate: offsetDate(40), recurrence: null, createdByUserId: member.id },
       {
         householdId: household.id,
+        categoryId: categoryByKey.get("housing")!.id,
+        name: "Mortgage",
+        amount: 2400,
+        expectedDate: offsetDate(3),
+        recurrence: "MONTHLY",
+        createdByUserId: admin.id,
+      },
+      {
+        householdId: household.id,
+        categoryId: categoryByKey.get("insurance")!.id,
+        name: "Insurance",
+        amount: 130,
+        expectedDate: offsetDate(7),
+        recurrence: "MONTHLY",
+        createdByUserId: admin.id,
+      },
+      {
+        householdId: household.id,
+        categoryId: categoryByKey.get("subscriptions")!.id,
+        name: "Streaming annual renewal",
+        amount: 139,
+        expectedDate: offsetDate(40),
+        recurrence: null,
+        createdByUserId: member.id,
+      },
+      {
+        householdId: household.id,
+        categoryId: categoryByKey.get("subscriptions")!.id,
         name: "Gym membership",
         amount: 60,
         expectedDate: offsetDate(-4),

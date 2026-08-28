@@ -1,14 +1,25 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * Upcoming Commitments V1 (§8 of the spec). Every test clears the
+ * Upcoming Commitments V1 (§8 of the spec), plus the /commitments
+ * management-page behavior from the later Home Page 2 bucket-card
+ * integration (see e2e/home-commitment-buckets.spec.ts for that
+ * integration's own Home-side coverage). Every test clears the
  * household's commitment list first, then builds exactly the data it
  * needs via the UI — these run single-worker/sequential against one
  * shared dev DB alongside every other spec file (playwright.config.ts:
  * fullyParallel: false, workers: 1), so starting from a known-empty
- * baseline makes each test's assertions (exact committed/uncommitted
- * totals, "only this commitment is visible") correct regardless of run
- * order or whatever the demo seed currently contains.
+ * baseline makes each test's assertions ("only this commitment is
+ * visible") correct regardless of run order or whatever the demo seed
+ * currently contains.
+ *
+ * The household-wide "Coming Up" widget (committed/uncommitted totals,
+ * shortfall warning) that used to live on Home was retired by the bucket-
+ * card integration in favor of each bucket showing its own rolling 7-day
+ * due line — see BucketCard.tsx / BucketDueLine.tsx. The underlying
+ * committed/uncommitted arithmetic (`summarizeCommitments`,
+ * `isCommitmentDueInPeriod`) still lives in packages/domain and stays
+ * unit-tested there; it's just no longer rendered as a standalone widget.
  *
  * The precise arithmetic (§2's formula) is already covered exactly in
  * packages/domain/src/__tests__/commitments.test.ts against deterministic
@@ -35,28 +46,46 @@ function isoDate(daysFromNow: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function parseAUD(text: string): number {
-  return Number(text.replace(/[^0-9.-]/g, ""));
-}
-
-/** Removes every commitment currently on the page (paid or not), leaving a known-empty baseline. Assumes it starts on /commitments. */
+/**
+ * Removes every commitment currently on the page (paid or not), leaving a
+ * known-empty baseline. Assumes it starts on /commitments.
+ *
+ * Waits for the row *count* to actually drop after each removal, not just
+ * for the edit form to collapse — the edit form's "Remove" button
+ * disappears the instant local component state flips (CommitmentCard.tsx
+ * sets `expanded = false` right after firing `router.refresh()`), which
+ * can happen before that refresh's server round-trip has actually landed
+ * and repainted the list. Proceeding to the next iteration on that signal
+ * alone races the real data: the next `.first()` can grab a DOM node that
+ * a delayed refresh then swaps out mid-click, surfacing as "element was
+ * detached from the DOM" instead of a stable pass.
+ */
 async function clearAllCommitments(page: Page) {
+  const rows = page.locator("main button").filter({ hasNotText: "+ Add a commitment" });
   for (let i = 0; i < 50; i++) {
-    const row = page.locator("main button").filter({ hasNotText: "+ Add a commitment" }).first();
-    if ((await row.count()) === 0) break;
-    await row.click();
+    const countBefore = await rows.count();
+    if (countBefore === 0) break;
+    await rows.first().click();
     await page.getByRole("button", { name: "Remove" }).click();
-    await expect(page.getByRole("button", { name: "Remove" })).toHaveCount(0);
+    await expect(rows).toHaveCount(countBefore - 1);
   }
 }
 
-async function addCommitment(page: Page, { name, amount, days, recurrence }: { name: string; amount: string; days: number; recurrence?: string }) {
+async function addCommitment(
+  page: Page,
+  { name, amount, days, recurrence, category }: { name: string; amount: string; days: number; recurrence?: string; category?: string },
+) {
   await page.getByText("+ Add a commitment").click();
   await page.getByLabel("Name").fill(name);
   await page.getByLabel("Amount").fill(amount);
   await page.getByLabel("Expected date").fill(isoDate(days));
   if (recurrence) await page.getByLabel("Repeats").selectOption(recurrence);
+  await page.getByLabel("Category").selectOption({ label: category ?? "Groceries" });
   await page.getByRole("button", { name: "Add commitment" }).click();
+  // Wait for the actual server-refreshed list to show the new row, not
+  // just for the add form to collapse — see clearAllCommitments's doc
+  // comment for why the two can be out of sync.
+  await expect(page.getByText(name, { exact: true })).toBeVisible();
   await expect(page.getByText("+ Add a commitment")).toBeVisible();
 }
 
@@ -85,13 +114,12 @@ test.describe("Upcoming Commitments V1", () => {
     await expect(page.getByText("E2E Test Bill (renamed)", { exact: true })).toHaveCount(0);
   });
 
-  test("marking a commitment paid moves it to Paid and it stops counting toward Home's committed total", async ({ page }) => {
-    await addCommitment(page, { name: "E2E Paid Test", amount: "88", days: 1 });
+  test("marking a commitment paid moves it to Paid and it stops appearing on Home's bucket due line", async ({ page }) => {
+    await addCommitment(page, { name: "E2E Paid Test", amount: "88", days: 1, category: "Groceries" });
 
     await page.goto("/");
     await page.locator("section").first().waitFor();
-    await expect(page.getByText("Coming up", { exact: true })).toBeVisible();
-    await expect(page.getByText("$88.00").first()).toBeVisible();
+    await expect(page.getByText("$88.00 due tomorrow", { exact: true })).toBeVisible();
 
     await page.goto("/commitments");
     await page.getByText("E2E Paid Test", { exact: true }).first().click();
@@ -110,56 +138,16 @@ test.describe("Upcoming Commitments V1", () => {
     await expect(page.getByText("E2E Paid Test", { exact: true })).toBeVisible();
     await expect(page.getByText(/^Paid ·/)).toBeVisible();
 
-    // Once completed, it's the household's only commitment, so it stops
-    // counting and Home falls back to the "nothing due" prompt (§4) — the
-    // Coming Up slot itself stays visible either way (see ComingUpCard.tsx's
-    // doc comment: it's never omitted, so /commitments always has an entry
-    // point from Home).
+    // Once completed, it's the household's only commitment, so no bucket
+    // on Home shows a due line anymore.
     await page.goto("/");
     await page.locator("section").first().waitFor();
-    await expect(page.getByText(/No bills tracked/)).toBeVisible();
+    await expect(page.getByText("$88.00 due tomorrow", { exact: true })).toHaveCount(0);
 
     await page.goto("/commitments");
     await page.getByText("E2E Paid Test", { exact: true }).first().click();
     await expect(page.getByRole("button", { name: "Mark paid" })).toHaveCount(0); // already paid — no re-showing the action
     await page.getByRole("button", { name: "Remove" }).click();
-  });
-
-  test("only commitments due within the current budget period count, with correct committed and uncommitted totals", async ({ page }) => {
-    await page.goto("/");
-    await page.locator("section").first().waitFor();
-    const remainingBefore = parseAUD((await page.getByText("remaining of").locator("..").locator("p").first().textContent()) ?? "");
-
-    await page.goto("/commitments");
-    await addCommitment(page, { name: "E2E In-Period Bill", amount: "111.50", days: 2 });
-    await addCommitment(page, { name: "E2E Future Bill", amount: "999", days: 200 }); // next budget period — must not count
-
-    await page.goto("/");
-    await page.locator("section").first().waitFor();
-
-    const comingUp = page.getByText("Coming up", { exact: true }).locator("../..");
-    await expect(comingUp).toBeVisible();
-    await expect(comingUp).toContainText("E2E In-Period Bill");
-    await expect(comingUp).not.toContainText("E2E Future Bill");
-
-    const committed = parseAUD((await page.getByText("Committed", { exact: true }).locator("..").locator("p").nth(1).textContent()) ?? "");
-    const uncommitted = parseAUD((await page.getByText("Uncommitted", { exact: true }).locator("..").locator("p").nth(1).textContent()) ?? "");
-    expect(committed).toBeCloseTo(111.5, 2);
-    expect(uncommitted).toBeCloseTo(remainingBefore - 111.5, 2);
-  });
-
-  test("shows a clear shortfall when commitments due this period exceed what's remaining", async ({ page }) => {
-    // An amount far larger than any plausible remaining budget guarantees
-    // a shortfall regardless of the demo household's current spend state.
-    await addCommitment(page, { name: "E2E Huge Bill", amount: "500000", days: 1 });
-
-    await page.goto("/");
-    await page.locator("section").first().waitFor();
-
-    await expect(page.getByText("Shortfall", { exact: true })).toBeVisible();
-    await expect(page.getByText(/short$/)).toBeVisible();
-    // The product spec explicitly avoids this phrase.
-    await expect(page.getByText(/safe to spend/i)).toHaveCount(0);
   });
 
   test("both household users see and can maintain the same commitments", async ({ page }) => {
@@ -181,21 +169,23 @@ test.describe("Upcoming Commitments V1", () => {
     await expect(page.getByText(/^Paid ·/)).toBeVisible();
   });
 
-  test("a household with zero commitments sees a compact 'add one' prompt on Home instead of the full Coming Up card, and a plain empty state on the commitments page", async ({
+  test("a household with zero commitments still has a permanent entry point into /commitments from Home, and a plain empty state on the commitments page itself", async ({
     page,
   }) => {
     await expect(page.getByText(/No upcoming commitments yet/)).toBeVisible();
 
     await page.goto("/");
     await page.locator("section").first().waitFor();
-    // The Coming Up slot itself is never omitted (§ obvious entry point from
-    // Home) — with nothing due it shows a tappable "add one" prompt rather
-    // than the full item-list/committed-total card.
-    await expect(page.getByText("Coming up", { exact: true })).toBeVisible();
-    await expect(page.getByText(/No bills tracked/)).toBeVisible();
-    await expect(page.getByText("Committed", { exact: true })).toHaveCount(0);
+    // The "View all upcoming commitments" link is always rendered on Home
+    // Page 2, regardless of whether any bucket has anything due — it's the
+    // household's permanent, discoverable entry point into /commitments
+    // (see ViewAllCommitmentsLink.tsx), unlike a per-bucket due line which
+    // only appears when that bucket actually has something coming up.
+    await expect(page.getByText("View all upcoming commitments", { exact: true })).toBeVisible();
+    // With nothing due anywhere, no bucket shows a due line at all.
+    await expect(page.getByText(/due (today|tomorrow|in )/)).toHaveCount(0);
 
-    await page.getByText(/No bills tracked/).click();
+    await page.getByText("View all upcoming commitments", { exact: true }).click();
     await expect(page).toHaveURL("/commitments");
   });
 });

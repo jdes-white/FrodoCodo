@@ -1,4 +1,4 @@
-import { toMoney, sumMoney, ZERO, addDays, daysInMonth, parseCalendarDate, formatCalendarDate, isBefore, isAfter } from "@frodocodo/shared";
+import { toMoney, sumMoney, ZERO, addDays, daysBetween, daysInMonth, parseCalendarDate, formatCalendarDate, isBefore, isAfter } from "@frodocodo/shared";
 import type { Money, MoneyInput, CalendarDate } from "@frodocodo/shared";
 import type { BudgetPeriodBounds } from "./budgetPeriod.js";
 
@@ -49,6 +49,72 @@ export function summarizeCommitments(remaining: MoneyInput, dueCommitments: Comm
     isShortfall,
     shortfall: isShortfall ? uncommitted.abs() : ZERO,
   };
+}
+
+/**
+ * The Home Page 2 bucket-card integration's rolling look-ahead (distinct
+ * from `isCommitmentDueInPeriod`'s budget-period window, which follows
+ * calendar-month/fortnightly boundaries): "due within N days from today",
+ * always exactly N days regardless of where the household's budget period
+ * happens to end. A commitment due today (daysUntil 0) counts; the
+ * category-must-be-chosen-explicitly rule lives in the caller, not here —
+ * this function only cares about dates.
+ */
+export function isCommitmentDueWithinWindow(commitment: CommitmentLike, asOf: CalendarDate, windowDays: number): boolean {
+  if (commitment.completedAt) return false;
+  if (isBefore(commitment.expectedDate, asOf)) return false;
+  return daysBetween(asOf, commitment.expectedDate) <= windowDays;
+}
+
+/** Sorted soonest-first — the order the expanded per-bucket view (and any other N-day list) should render in. */
+export function commitmentsDueWithinWindow<T extends CommitmentLike>(commitments: T[], asOf: CalendarDate, windowDays: number): T[] {
+  return commitments
+    .filter((c) => isCommitmentDueWithinWindow(c, asOf, windowDays))
+    .sort((a, b) => a.expectedDate.localeCompare(b.expectedDate));
+}
+
+export interface UpcomingWindowSummary {
+  /** Sum of every item passed in — callers pass only already-window-filtered items. */
+  total: Money;
+  count: number;
+  /**
+   * The non-amount half of the compact bucket-card line, e.g. "due
+   * tomorrow" / "due in 4 days" / "due in the next 7 days" — callers
+   * prefix this with their own formatted `total` (money formatting is a
+   * web/shared concern, not a domain one). Null when `count` is 0, since
+   * there's nothing to say.
+   */
+  phrase: string | null;
+}
+
+/**
+ * Smart time-based wording (per the Upcoming Commitments Home-integration
+ * spec): a single commitment gets its own specific date language ("due
+ * tomorrow", "due in 4 days"), while two or more collapse to the window
+ * boundary ("due in the next 7 days") rather than trying to describe
+ * several different dates in one line. A single item that lands exactly on
+ * the window's edge also uses the boundary phrasing (matching the spec's
+ * worked examples) rather than "due in 7 days".
+ */
+export function summarizeUpcomingWindow(dueItems: CommitmentLike[], asOf: CalendarDate, windowDays: number): UpcomingWindowSummary {
+  if (dueItems.length === 0) return { total: ZERO, count: 0, phrase: null };
+
+  const total = sumMoney(dueItems.map((c) => toMoney(c.amount)));
+
+  if (dueItems.length === 1) {
+    const daysUntil = daysBetween(asOf, dueItems[0]!.expectedDate);
+    const phrase =
+      daysUntil <= 0
+        ? "due today"
+        : daysUntil === 1
+          ? "due tomorrow"
+          : daysUntil < windowDays
+            ? `due in ${daysUntil} days`
+            : `due in the next ${windowDays} days`;
+    return { total, count: 1, phrase };
+  }
+
+  return { total, count: dueItems.length, phrase: `due in the next ${windowDays} days` };
 }
 
 /**

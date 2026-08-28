@@ -396,6 +396,7 @@ model Category {
   merchantRules      MerchantRule[]
   fixedCommitments   FixedCommitment[]
   savingsGoals       SavingsGoal[]
+  upcomingCommitments UpcomingCommitment[]
 
   @@unique([householdId, name])
   @@index([bucketId])
@@ -494,6 +495,16 @@ model SavingsGoal {
 model UpcomingCommitment {
   id              String                @id @default(cuid())
   householdId     String
+  // Which budget category this bill belongs to — drives the Home Page 2
+  // bucket-card integration (apps/web/components/BucketCard.tsx): a
+  // commitment rolls up into its category's bucket for the "$420 due in
+  // the next 7 days" line. Nullable because commitments predate this field
+  // (existing rows have none) and because the household chooses the
+  // category explicitly when adding/editing one — this is never inferred
+  // from transaction history (see packages/domain/src/commitments.ts).
+  // SetNull rather than Cascade: deleting a category shouldn't silently
+  // delete the household's record of a bill they still owe.
+  categoryId      String?
   name            String
   amount          Decimal               @db.Decimal(14, 2)
   expectedDate    DateTime              @db.Date
@@ -507,9 +518,11 @@ model UpcomingCommitment {
   updatedAt       DateTime              @updatedAt
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category  Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
 
   @@index([householdId, expectedDate])
+  @@index([categoryId])
 }
 
 // ---------- Transactions (canonical model, spec §9) ----------
