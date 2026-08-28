@@ -110,11 +110,14 @@ test.describe("Upcoming Commitments V1", () => {
     await expect(page.getByText("E2E Paid Test", { exact: true })).toBeVisible();
     await expect(page.getByText(/^Paid ·/)).toBeVisible();
 
-    // Once completed, it's the household's only commitment, so it stopping
-    // to count means the whole widget disappears (§4, §7 zero-state).
+    // Once completed, it's the household's only commitment, so it stops
+    // counting and Home falls back to the "nothing due" prompt (§4) — the
+    // Coming Up slot itself stays visible either way (see ComingUpCard.tsx's
+    // doc comment: it's never omitted, so /commitments always has an entry
+    // point from Home).
     await page.goto("/");
     await page.locator("section").first().waitFor();
-    await expect(page.getByText("Coming up", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/No bills tracked/)).toBeVisible();
 
     await page.goto("/commitments");
     await page.getByText("E2E Paid Test", { exact: true }).first().click();
@@ -178,11 +181,21 @@ test.describe("Upcoming Commitments V1", () => {
     await expect(page.getByText(/^Paid ·/)).toBeVisible();
   });
 
-  test("a household with zero commitments sees no Coming Up card on Home and a plain empty state on the commitments page", async ({ page }) => {
+  test("a household with zero commitments sees a compact 'add one' prompt on Home instead of the full Coming Up card, and a plain empty state on the commitments page", async ({
+    page,
+  }) => {
     await expect(page.getByText(/No upcoming commitments yet/)).toBeVisible();
 
     await page.goto("/");
     await page.locator("section").first().waitFor();
-    await expect(page.getByText("Coming up", { exact: true })).toHaveCount(0);
+    // The Coming Up slot itself is never omitted (§ obvious entry point from
+    // Home) — with nothing due it shows a tappable "add one" prompt rather
+    // than the full item-list/committed-total card.
+    await expect(page.getByText("Coming up", { exact: true })).toBeVisible();
+    await expect(page.getByText(/No bills tracked/)).toBeVisible();
+    await expect(page.getByText("Committed", { exact: true })).toHaveCount(0);
+
+    await page.getByText(/No bills tracked/).click();
+    await expect(page).toHaveURL("/commitments");
   });
 });

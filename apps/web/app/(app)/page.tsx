@@ -10,7 +10,7 @@ import { BucketCard } from "@/components/BucketCard";
 import { PacingRing } from "@/components/PacingRing";
 import { StatusPill } from "@/components/StatusPill";
 import { PagedPanels } from "@/components/PagedPanels";
-import { ComingUpCard, type ComingUpPreviewItem } from "@/components/ComingUpCard";
+import { ComingUpCard, ComingUpEmptyCard, type ComingUpPreviewItem } from "@/components/ComingUpCard";
 
 const MUTED = { color: "var(--color-text-muted)" } as const;
 
@@ -53,7 +53,9 @@ export default async function DashboardPage() {
           key="panel-2"
           buckets={buckets}
           comingUp={
-            dueCommitments.length === 0 ? null : (
+            dueCommitments.length === 0 ? (
+              <ComingUpEmptyCard />
+            ) : (
               <ComingUpCard
                 items={previewItems}
                 overflowCount={overflow.length}
@@ -143,14 +145,16 @@ function Panel1({
 
 /**
  * "Where's it going?" — the full bucket breakdown (§6), plus (below the
- * buckets) the optional "Coming Up" widget from the Upcoming Commitments
- * V1 spec — known bills still due this period and how much of what's left
- * is already spoken for. `comingUp` arrives pre-rendered (or null) from
- * the page component rather than this function computing it, so the
- * "must fit one viewport, no internal scroll" constraint that already
- * governed the bucket list stays enforced in exactly one place: the
- * caller bounds the widget's preview rows before it ever gets here, and
- * omits it outright for a household with nothing due.
+ * buckets) the "Coming Up" widget from the Upcoming Commitments V1 spec —
+ * known bills still due this period and how much of what's left is
+ * already spoken for, or a compact prompt to add one when there's nothing
+ * due yet (see ComingUpCard.tsx / ComingUpEmptyCard — this slot is always
+ * rendered, never omitted, so /commitments has a permanent, obvious entry
+ * point from Home). `comingUp` arrives pre-rendered from the page
+ * component rather than this function computing it, so the "must fit one
+ * viewport, no internal scroll" constraint that already governed the
+ * bucket list stays enforced in exactly one place: the caller bounds the
+ * widget's preview rows before it ever gets here.
  */
 function Panel2({ buckets, comingUp }: { buckets: BucketSnapshot[]; comingUp: ReactNode }) {
   return (

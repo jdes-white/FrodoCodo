@@ -19,10 +19,15 @@ export interface ComingUpPreviewItem {
  * due, so this can never grow tall enough to push Home Page 2 into
  * internal scroll (see app/(app)/page.tsx's Panel2 doc comment — the
  * whole panel must fit one viewport with no clipped content).
- * Deliberately omitted entirely by the caller when there are zero due
- * commitments, rather than rendered here in an empty state — an existing
- * household with nothing tracked should see Home exactly as it looked
- * before this feature existed (§7).
+ *
+ * When nothing is due this period, the caller renders `ComingUpEmptyCard`
+ * (below) instead of this component — never nothing at all. An earlier
+ * version of this feature hid the entire slot whenever there was nothing
+ * due, on the theory that an untouched household should see Home exactly
+ * as before; in practice that left zero discoverable path to the feature
+ * for a brand-new household, since nothing else on Home (or in the bottom
+ * nav, deliberately) points at /commitments. The "always show *something*
+ * here" fix keeps the same one-slot footprint either way.
  */
 export function ComingUpCard({
   items,
@@ -84,6 +89,34 @@ export function ComingUpCard({
             </p>
           </div>
         </div>
+      </Card>
+    </Link>
+  );
+}
+
+/**
+ * The always-visible fallback for the same Home Page 2 slot when nothing
+ * is due this period — either a brand-new household with no commitments
+ * at all, or one whose tracked bills all fall outside the current period.
+ * Same header treatment and tap target as ComingUpCard, so the entry
+ * point into /commitments is obvious and consistent whether or not
+ * there's anything to show yet.
+ */
+export function ComingUpEmptyCard() {
+  return (
+    <Link href="/commitments" className="block transition hover:opacity-90">
+      <Card padding="p-2.5" className="flex items-center justify-between gap-2">
+        <div>
+          <span className="text-[10px] font-semibold tracking-wide uppercase" style={MUTED}>
+            Coming up
+          </span>
+          <p className="text-[11px]" style={MUTED}>
+            No bills tracked for this period — tap to add one
+          </p>
+        </div>
+        <span className="shrink-0 text-[10px] font-semibold" style={{ color: "var(--color-accent)" }}>
+          + Add
+        </span>
       </Card>
     </Link>
   );
