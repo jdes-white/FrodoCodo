@@ -58,6 +58,7 @@ export async function getTransactionDetail(householdId: string, transactionId: s
       account: { include: { connection: { include: { institution: true } } } },
       merchant: true,
       category: { include: { bucket: true } },
+      suggestedCategory: { include: { bucket: true } },
       classifications: { orderBy: { createdAt: "desc" }, include: { createdBy: true } },
     },
   });

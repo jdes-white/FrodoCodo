@@ -91,8 +91,15 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
 
   const bucketMap = new Map<string, BucketSnapshot>();
 
-  for (const allocation of allocations) {
-    const category = allocation.category;
+  /**
+   * Builds one category's PacingResult and files it under its bucket.
+   * Shared by the allocation-driven loop below and the allocation-less
+   * top-up pass right after it, so a category that happens to have no
+   * BudgetAllocation row this period is aggregated exactly the same way
+   * as one that does — just with a $0 allocation — rather than needing a
+   * second, subtly different code path.
+   */
+  function addCategoryToBucket(category: { id: string; name: string; spendingType: SpendingType; bucket: { id: string; name: string; colorToken: string } }, allocationAmount: Money): void {
     const bucket = category.bucket;
     const spent = periodTotals.get(category.id) ?? toMoney(0);
     const trailing = trailingTotals.get(category.id) ?? toMoney(0);
@@ -101,7 +108,7 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
     const pacing = calculatePacing({
       period,
       asOf,
-      allocation: fromPrismaDecimal(allocation.amount),
+      allocation: allocationAmount,
       spentToDate: spent,
       spendingType: category.spendingType,
       fixedDueDayOfMonth: fixedCommitment?.expectedDueDayOfMonth ?? undefined,
@@ -128,6 +135,36 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
         pacing, // placeholder, replaced below once all categories are collected
         categories: [categorySnapshot],
       });
+    }
+  }
+
+  for (const allocation of allocations) {
+    addCategoryToBucket(allocation.category, fromPrismaDecimal(allocation.amount));
+  }
+
+  // A transaction can be correctly classified into a real Category that
+  // simply has no BudgetAllocation row for the *current* period (e.g. a
+  // category created mid-period, or one whose allocation was later
+  // removed) — the loop above, which only walks allocations, would
+  // silently drop that spend from every bucket total on Home/Insights/
+  // Plan even though the money is real and the categorisation is correct.
+  // This does not fabricate or double-count anything: it's the exact same
+  // netSpendByCategory total already computed above, just for categories
+  // the allocation loop didn't otherwise reach; a category with zero spend
+  // this period still doesn't appear (nothing to show), and one that *is*
+  // covered by an allocation is never processed twice.
+  const allocatedCategoryIds = new Set(allocations.map((a) => a.categoryId));
+  const uncoveredCategoryIdsWithSpend = [...periodTotals.entries()]
+    .filter(([categoryId, spent]) => !allocatedCategoryIds.has(categoryId) && !spent.isZero())
+    .map(([categoryId]) => categoryId);
+
+  if (uncoveredCategoryIdsWithSpend.length > 0) {
+    const uncoveredCategories = await prisma.category.findMany({
+      where: { id: { in: uncoveredCategoryIdsWithSpend } },
+      include: { bucket: true },
+    });
+    for (const category of uncoveredCategories) {
+      addCategoryToBucket(category, toMoney(0));
     }
   }
 

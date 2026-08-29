@@ -113,6 +113,11 @@ export async function syncConnection(provider: FinancialDataProvider, connection
         merchantRule: rule ? { categoryId: rule.categoryId, ruleId: rule.id } : undefined,
         learnedMapping: merchantRow.defaultCategoryId ? { categoryId: merchantRow.defaultCategoryId, confidence: 0.85 } : undefined,
       });
+      // AI suggestion stays out of the real ingestion path deliberately —
+      // only the deterministic layers (rule / learned mapping; provider
+      // enrichment stays unwired until a real provider exists) ever feed
+      // resolveClassification here. See docs/financial-calculation-rules.md
+      // and the categorisation audit for why this is intentional for now.
       const classification = resolveClassification(deterministic, null);
 
       await prisma.transaction.create({
@@ -130,6 +135,14 @@ export async function syncConnection(provider: FinancialDataProvider, connection
           categoryId: classification.status === "CLASSIFIED" ? classification.categoryId : null,
           classificationConfidence: classification.status === "CLASSIFIED" ? classification.confidence : null,
           classificationSource: classification.status === "CLASSIFIED" ? classification.source : null,
+          // When nothing cleared the auto-classify threshold, keep whatever
+          // best guess the deterministic layer had (if any) as a hint for
+          // the reclassify UI — the transaction is still unambiguously
+          // uncategorised (categoryId above stays null) until a human
+          // confirms it.
+          suggestedCategoryId: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessCategoryId ?? null) : null,
+          suggestedCategorySource: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessSource ?? null) : null,
+          suggestedCategoryConfidence: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessConfidence ?? null) : null,
           syncRunId: syncRun.id,
           rawProviderPayload: tx.raw as never,
         },

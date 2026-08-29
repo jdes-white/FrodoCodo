@@ -61,11 +61,23 @@ export default async function TransactionDetailPage({ params }: { params: Promis
 
       <Card as="section">
         <h2 className="mb-3 text-sm font-medium">Reclassify</h2>
+        {!transaction.categoryId && transaction.suggestedCategory && (
+          <p className="mb-3 text-xs" style={{ color: "var(--color-text-muted)" }}>
+            Needs review — best guess is{" "}
+            <span className="font-medium">
+              {transaction.suggestedCategory.bucket.name} · {transaction.suggestedCategory.name}
+            </span>
+            {transaction.suggestedCategorySource && typeof transaction.suggestedCategoryConfidence === "number"
+              ? ` (${formatSource(transaction.suggestedCategorySource)}, ${Math.round(transaction.suggestedCategoryConfidence * 100)}% confidence)`
+              : ""}
+            . Pre-selected below — confirm or change it, then save.
+          </p>
+        )}
         <form action={reclassifyTransaction} className="flex flex-col gap-3">
           <input type="hidden" name="transactionId" value={transaction.id} />
           <select
             name="categoryId"
-            defaultValue={transaction.categoryId ?? ""}
+            defaultValue={transaction.categoryId ?? transaction.suggestedCategoryId ?? ""}
             required
             className="rounded-lg border px-3 py-2 text-sm"
             style={{ borderColor: "var(--color-border)", background: "var(--color-bg)" }}

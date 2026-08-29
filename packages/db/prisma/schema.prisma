@@ -390,6 +390,7 @@ model Category {
   household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
   bucket             BudgetBucket        @relation(fields: [bucketId], references: [id], onDelete: Cascade)
   transactions       Transaction[]
+  suggestedForTransactions Transaction[] @relation("SuggestedCategory")
   classifications    TransactionClassification[]
   allocations        BudgetAllocation[]
   merchantDefaults   Merchant[]
@@ -549,6 +550,20 @@ model Transaction {
   classificationSource     ClassificationSource?
   isUserOverridden         Boolean @default(false)
 
+  // The deterministic classifier's best guess when nothing cleared the
+  // auto-classify confidence threshold (resolveClassification's
+  // NEEDS_REVIEW outcome, packages/ledger/src/classification.ts) — kept
+  // entirely separate from categoryId/classificationSource above so a
+  // transaction carrying a suggestion is still unambiguously
+  // uncategorised (categoryId stays null) until a human confirms it. The
+  // reclassify UI uses this only to preselect/hint an option; it's never
+  // read by budget totals or anything else that treats categoryId as the
+  // source of truth. Cleared back to null once the transaction is
+  // actually classified (by the user or by a bulk rule application).
+  suggestedCategoryId         String?
+  suggestedCategorySource     ClassificationSource?
+  suggestedCategoryConfidence Float?
+
   notes String?
 
   isRecurring         Boolean @default(false)
@@ -569,6 +584,7 @@ model Transaction {
   syncRun          SyncRun?      @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
   merchant         Merchant?     @relation(fields: [normalizedMerchantId], references: [id], onDelete: SetNull)
   category         Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  suggestedCategory Category?    @relation("SuggestedCategory", fields: [suggestedCategoryId], references: [id], onDelete: SetNull)
   classifications  TransactionClassification[]
   counterpart      Transaction?  @relation("TransferCounterpart", fields: [counterpartTransactionId], references: [id], onDelete: SetNull)
   counterpartOf     Transaction? @relation("TransferCounterpart")

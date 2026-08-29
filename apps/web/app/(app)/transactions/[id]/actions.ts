@@ -1,16 +1,43 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@frodocodo/db";
+import { prisma, Prisma } from "@frodocodo/db";
+import { deriveLearnedMapping } from "@frodocodo/ledger";
 import { requireSession } from "@/lib/session";
 import { recordAuditEvent } from "@/lib/audit";
 
 /**
+ * How many of the household's most recent USER-sourced classifications for
+ * one merchant to consider when checking whether a learned mapping should
+ * form (packages/ledger/src/classification.ts's deriveLearnedMapping,
+ * §12). Bounded so the "recent" in "repeated recent corrections" means
+ * something — an old correction from a year ago shouldn't weigh the same
+ * as one from yesterday forever. deriveLearnedMapping's own minRepeats
+ * default (3) is what actually prevents a single correction from
+ * retraining anything; this just bounds how far back "recent" looks.
+ */
+const LEARNED_MAPPING_LOOKBACK = 10;
+
+/**
  * §32 corrections/overrides. Every write here is paired with a
  * TransactionClassification row and/or AuditEvent so the household can
- * always see *why* a total changed (§31 trust and explainability), and
- * §12: reclassifying can optionally teach the system by creating a
- * MerchantRule for future transactions from the same merchant.
+ * always see *why* a total changed (§31 trust and explainability).
+ *
+ * Two distinct ways a correction can affect more than the one transaction,
+ * both scoped carefully:
+ *  - Checking "always classify this way" creates/updates an explicit
+ *    MerchantRule (top precedence, §11) for *future* imports, and also
+ *    immediately re-classifies any other transaction from this merchant
+ *    that's still sitting uncategorised right now (`applyRuleToSiblings`)
+ *    — never one the household already gave an explicit category to,
+ *    since that's excluded by construction (only categoryId IS NULL rows
+ *    qualify).
+ *  - Independently of that checkbox, enough *repeated* recent USER
+ *    corrections to the same merchant/category (`deriveLearnedMapping`,
+ *    §12) promote to a learned mapping (Merchant.defaultCategoryId) — a
+ *    single correction never does this on its own, and an explicit rule
+ *    (if one already exists) always wins over a learned mapping anyway,
+ *    so there's no point deriving one in that case.
  */
 export async function reclassifyTransaction(formData: FormData): Promise<void> {
   const session = await requireSession();
@@ -22,10 +49,21 @@ export async function reclassifyTransaction(formData: FormData): Promise<void> {
     where: { id: transactionId, account: { connection: { householdId: session.householdId } } },
   });
 
+  let siblingsUpdated = 0;
+  let learnedMappingCategoryId: string | null = null;
+
   await prisma.$transaction(async (tx) => {
     await tx.transaction.update({
       where: { id: transactionId },
-      data: { categoryId, isUserOverridden: true, classificationSource: "USER", classificationConfidence: 1 },
+      data: {
+        categoryId,
+        isUserOverridden: true,
+        classificationSource: "USER",
+        classificationConfidence: 1,
+        suggestedCategoryId: null,
+        suggestedCategorySource: null,
+        suggestedCategoryConfidence: null,
+      },
     });
     await tx.transactionClassification.create({
       data: {
@@ -37,17 +75,33 @@ export async function reclassifyTransaction(formData: FormData): Promise<void> {
       },
     });
 
-    if (applyToFutureFromMerchant && transaction.normalizedMerchantId) {
-      await tx.merchantRule.upsert({
-        where: { householdId_merchantId: { householdId: session.householdId, merchantId: transaction.normalizedMerchantId } },
-        update: { categoryId, createdById: session.userId },
-        create: {
+    if (transaction.normalizedMerchantId) {
+      if (applyToFutureFromMerchant) {
+        const rule = await tx.merchantRule.upsert({
+          where: { householdId_merchantId: { householdId: session.householdId, merchantId: transaction.normalizedMerchantId } },
+          update: { categoryId, createdById: session.userId },
+          create: {
+            householdId: session.householdId,
+            merchantId: transaction.normalizedMerchantId,
+            categoryId,
+            createdById: session.userId,
+          },
+        });
+
+        siblingsUpdated = await applyRuleToUnresolvedSiblings(tx, {
           householdId: session.householdId,
           merchantId: transaction.normalizedMerchantId,
+          excludeTransactionId: transactionId,
           categoryId,
-          createdById: session.userId,
-        },
-      });
+          ruleId: rule.id,
+          userId: session.userId,
+        });
+      } else {
+        learnedMappingCategoryId = await learnFromRecentCorrections(tx, {
+          householdId: session.householdId,
+          merchantId: transaction.normalizedMerchantId,
+        });
+      }
     }
   });
 
@@ -57,12 +111,101 @@ export async function reclassifyTransaction(formData: FormData): Promise<void> {
     action: applyToFutureFromMerchant ? "RECLASSIFY_TRANSACTION_AND_CREATE_RULE" : "RECLASSIFY_TRANSACTION",
     entityType: "Transaction",
     entityId: transactionId,
-    metadata: { categoryId },
+    metadata: {
+      categoryId,
+      ...(siblingsUpdated > 0 ? { siblingsUpdated } : {}),
+      ...(learnedMappingCategoryId ? { learnedMappingCategoryId } : {}),
+    },
   });
 
   revalidatePath(`/transactions/${transactionId}`);
   revalidatePath("/transactions");
   revalidatePath("/");
+}
+
+/**
+ * "Always classify this way" shouldn't leave the household's *existing*
+ * uncategorised transactions from the same merchant sitting untouched in
+ * the review queue right next to the one they just fixed — that's the
+ * unambiguous, safe case: a transaction with no category yet has nothing
+ * of the household's own judgement to overwrite. Anything that already
+ * has a category (however it got one — rule, provider, an earlier manual
+ * pick) is left alone by construction, since it's excluded by the
+ * `categoryId: null` filter below.
+ */
+async function applyRuleToUnresolvedSiblings(
+  tx: Prisma.TransactionClient,
+  params: { householdId: string; merchantId: string; excludeTransactionId: string; categoryId: string; ruleId: string; userId: string },
+): Promise<number> {
+  const siblings = await tx.transaction.findMany({
+    where: {
+      id: { not: params.excludeTransactionId },
+      normalizedMerchantId: params.merchantId,
+      categoryId: null,
+      account: { connection: { householdId: params.householdId } },
+    },
+    select: { id: true },
+  });
+  if (siblings.length === 0) return 0;
+
+  await tx.transaction.updateMany({
+    where: { id: { in: siblings.map((s) => s.id) } },
+    data: {
+      categoryId: params.categoryId,
+      classificationSource: "RULE",
+      classificationConfidence: 1,
+      suggestedCategoryId: null,
+      suggestedCategorySource: null,
+      suggestedCategoryConfidence: null,
+    },
+  });
+  await tx.transactionClassification.createMany({
+    data: siblings.map((s) => ({
+      transactionId: s.id,
+      categoryId: params.categoryId,
+      source: "RULE" as const,
+      confidence: 1,
+      ruleId: params.ruleId,
+      createdByUserId: params.userId,
+    })),
+  });
+
+  return siblings.length;
+}
+
+/**
+ * §12: once the household has corrected the same merchant to the same
+ * category `deriveLearnedMapping`'s minRepeats (3) or more times recently
+ * — without an explicit rule already covering it, since a rule always
+ * wins anyway — treat that as a learned mapping so future transactions
+ * from that merchant stop needing attention even without a standing rule.
+ * A single correction can never trigger this: deriveLearnedMapping itself
+ * refuses until the repeat count is met.
+ */
+async function learnFromRecentCorrections(
+  tx: Prisma.TransactionClient,
+  params: { householdId: string; merchantId: string },
+): Promise<string | null> {
+  const existingRule = await tx.merchantRule.findUnique({
+    where: { householdId_merchantId: { householdId: params.householdId, merchantId: params.merchantId } },
+  });
+  if (existingRule) return null;
+
+  const recentUserClassifications = await tx.transactionClassification.findMany({
+    where: {
+      source: "USER",
+      transaction: { normalizedMerchantId: params.merchantId, account: { connection: { householdId: params.householdId } } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: LEARNED_MAPPING_LOOKBACK,
+    select: { categoryId: true },
+  });
+
+  const mapping = deriveLearnedMapping(recentUserClassifications);
+  if (!mapping) return null;
+
+  await tx.merchant.update({ where: { id: params.merchantId }, data: { defaultCategoryId: mapping.categoryId } });
+  return mapping.categoryId;
 }
 
 export async function setExcludedFromBudget(formData: FormData): Promise<void> {
