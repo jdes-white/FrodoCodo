@@ -3,9 +3,9 @@ import { allowedMoneyValues, narrativeCitesOnlyKnownFigures, type FinancialFactS
 
 const factSheet: FinancialFactSheet = {
   budgetPeriod: { startDate: "2026-08-01", endDate: "2026-08-31", percentElapsed: 50 },
-  totals: { allocation: "$5,000.00", spent: "$2,300.00", remaining: "$2,700.00", status: "AHEAD" },
+  totals: { allocation: "$5,000.00", spent: "$2,300.00", remaining: "$2,700.00", status: "AHEAD_OF_PLAN" },
   buckets: [
-    { name: "Lifestyle", allocation: "$800.00", spent: "$620.00", remaining: "$180.00", status: "BEHIND" },
+    { name: "Lifestyle", allocation: "$800.00", spent: "$620.00", remaining: "$180.00", status: "SLIGHTLY_OVER_PACE" },
   ],
 };
 

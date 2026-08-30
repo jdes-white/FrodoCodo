@@ -1,11 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatAUD } from "@frodocodo/shared";
-import { deriveSpendPaceStatus, spendPaceLabel } from "@frodocodo/domain";
+import { derivePaceStatusFromPacing, paceStatusLabel } from "@frodocodo/domain";
 import { requireSession } from "@/lib/session";
 import { getBudgetSnapshot } from "@/lib/budgetSnapshot";
 import { listTransactions } from "@/lib/transactions";
-import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
+import { paceStatusColorVar, paceStatusSoftColorVar } from "@/lib/pacePosition";
 import { ProgressBar } from "@/components/ProgressBar";
 import { TransactionList } from "@/components/TransactionList";
 import { Card } from "@/components/Card";
@@ -21,7 +21,7 @@ export default async function BucketDetailPage({ params }: { params: Promise<{ b
   if (!bucket) notFound();
 
   const transactions = await listTransactions(session.householdId, { bucketId, limit: 15 });
-  const bucketStatus = deriveSpendPaceStatus(bucket.pacing);
+  const bucketStatus = derivePaceStatusFromPacing(bucket.pacing);
 
   return (
     <div className="flex flex-col gap-6">
@@ -39,10 +39,10 @@ export default async function BucketDetailPage({ params }: { params: Promise<{ b
           remaining of {formatAUD(bucket.pacing.allocation)}
         </p>
         <div className="mt-3">
-          <StatusPill label={spendPaceLabel(bucketStatus)} color={spendPaceColorVar(bucketStatus)} soft={spendPaceSoftColorVar(bucketStatus)} />
+          <StatusPill label={paceStatusLabel(bucketStatus)} color={paceStatusColorVar(bucketStatus)} soft={paceStatusSoftColorVar(bucketStatus)} />
         </div>
         <div className="mt-4">
-          <ProgressBar percent={bucket.pacing.percentConsumed} colorVar={spendPaceColorVar(bucketStatus)} />
+          <ProgressBar percent={bucket.pacing.percentConsumed} colorVar={paceStatusColorVar(bucketStatus)} />
         </div>
         <p className="mt-3 text-xs" style={{ color: "var(--color-text-muted)" }}>
           Projected to finish at {formatAUD(bucket.pacing.projectedEndOfPeriod)}
@@ -58,7 +58,7 @@ export default async function BucketDetailPage({ params }: { params: Promise<{ b
         </h2>
         <div className="flex flex-col gap-2">
           {bucket.categories.map((category) => {
-            const categoryStatus = deriveSpendPaceStatus(category.pacing);
+            const categoryStatus = derivePaceStatusFromPacing(category.pacing);
             return (
               <Card key={category.categoryId} padding="p-3.5">
                 <div className="flex items-center gap-3">
@@ -66,15 +66,15 @@ export default async function BucketDetailPage({ params }: { params: Promise<{ b
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <p className="truncate text-sm font-medium">{category.name}</p>
-                      <span className="shrink-0 text-xs font-medium" style={{ color: spendPaceColorVar(categoryStatus) }}>
-                        {spendPaceLabel(categoryStatus)}
+                      <span className="shrink-0 text-xs font-medium" style={{ color: paceStatusColorVar(categoryStatus) }}>
+                        {paceStatusLabel(categoryStatus)}
                       </span>
                     </div>
                     <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
                       {formatAUD(category.pacing.spentToDate)} of {formatAUD(category.pacing.allocation)}
                     </p>
                     <div className="mt-1.5">
-                      <ProgressBar percent={category.pacing.percentConsumed} colorVar={spendPaceColorVar(categoryStatus)} />
+                      <ProgressBar percent={category.pacing.percentConsumed} colorVar={paceStatusColorVar(categoryStatus)} />
                     </div>
                   </div>
                 </div>

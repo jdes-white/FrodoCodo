@@ -2,8 +2,8 @@ import { requireSession } from "@/lib/session";
 import { getLiveInsights } from "@/lib/insights";
 import { getBudgetSnapshot } from "@/lib/budgetSnapshot";
 import { withRouteTiming } from "@/lib/perf";
-import { deriveSpendPaceStatus, explainSpendPace, spendPaceLabel } from "@frodocodo/domain";
-import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
+import { explainPaceStatus, paceStatusLabel } from "@frodocodo/domain";
+import { paceStatusColorVar, paceStatusSoftColorVar } from "@/lib/pacePosition";
 import { AskCoach } from "./AskCoach";
 import { Card } from "@/components/Card";
 import { StatusPill } from "@/components/StatusPill";
@@ -22,27 +22,27 @@ export default async function InsightsPage() {
     Promise.all([getLiveInsights(session.householdId), getBudgetSnapshot(session.householdId)]),
   );
 
-  // Same status logic Home's Panel 1 uses (packages/domain/src/spendPace.ts)
-  // — one shared source of truth for how the household's position is
-  // calculated and worded, so this page can't independently describe the
-  // same position with different wording than Home does.
-  const status = deriveSpendPaceStatus(snapshot.totalPacing);
-  const explanation = explainSpendPace(
-    {
-      variance: snapshot.totalPacing.variance,
-      allocation: snapshot.totalPacing.allocation,
-      percentPeriodElapsed: snapshot.totalPacing.percentPeriodElapsed,
-      percentConsumed: snapshot.flexibleBudget.percentConsumed,
-    },
-    "flexible budget",
-  );
+  // The household's total pacing, run through the same canonical pace
+  // classification (packages/domain/src/pacePosition.ts) that Home's
+  // bucket cards and the AI fact sheet use on this exact same
+  // `snapshot.totalPacing` object — this page can never describe the same
+  // financial position differently than either of those (see
+  // pacePosition.ts's module doc comment for why one shared classifier
+  // matters here). Home Panel 1's ring is the one deliberate exception:
+  // it classifies pace against the flexible-only budget on purpose (a
+  // fixed commitment posting on schedule isn't a pacing signal), so it
+  // can legitimately show a different status than this total-based one —
+  // that's a different question ("how's discretionary spending going?"
+  // vs. "how's everything going?"), not a second classification system.
+  const explanation = explainPaceStatus(snapshot.totalPacing, "budget");
+  const status = explanation.status;
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="Insights" />
 
       <Card padding="p-4" className="flex items-center gap-3">
-        <StatusPill label={spendPaceLabel(status)} color={spendPaceColorVar(status)} soft={spendPaceSoftColorVar(status)} />
+        <StatusPill label={paceStatusLabel(status)} color={paceStatusColorVar(status)} soft={paceStatusSoftColorVar(status)} />
         <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
           {explanation.summary}
         </p>

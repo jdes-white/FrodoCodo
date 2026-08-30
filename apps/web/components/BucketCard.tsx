@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { formatAUD } from "@frodocodo/shared";
-import { deriveSpendPaceStatus, spendPaceLabel } from "@frodocodo/domain";
+import { derivePaceStatusFromPacing, paceStatusLabel } from "@frodocodo/domain";
 import type { BucketSnapshot } from "@/lib/budgetSnapshot";
-import { spendPaceColorVar, spendPaceSoftColorVar } from "@/lib/statusDisplay";
+import { paceStatusColorVar, paceStatusSoftColorVar } from "@/lib/pacePosition";
 import type { CategoryOption } from "@/app/(app)/commitments/CommitmentFormFields";
 import { ProgressBar } from "./ProgressBar";
 import { Card } from "./Card";
@@ -51,9 +51,9 @@ export function BucketCard({
   categories: CategoryOption[];
 }) {
   const { pacing } = bucket;
-  const status = deriveSpendPaceStatus(pacing);
-  const color = spendPaceColorVar(status);
-  const soft = spendPaceSoftColorVar(status);
+  const status = derivePaceStatusFromPacing(pacing);
+  const color = paceStatusColorVar(status);
+  const soft = paceStatusSoftColorVar(status);
 
   return (
     <Card padding="p-3" className="flex flex-col gap-1.5">
@@ -64,7 +64,7 @@ export function BucketCard({
           <p className="shrink-0 text-sm font-semibold">{formatAUD(pacing.remaining)} left</p>
         </div>
         <div className="flex items-center gap-2">
-          <StatusPill label={spendPaceLabel(status)} color={color} soft={soft} />
+          <StatusPill label={paceStatusLabel(status)} color={color} soft={soft} />
           <div className="min-w-0 flex-1">
             <ProgressBar percent={pacing.percentConsumed} colorVar={color} />
           </div>

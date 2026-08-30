@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { derivePaceDifference, derivePaceStatus, derivePaceGradientPosition, paceStatusLabel, clampArcPercent } from "../pacePosition.js";
+import { toMoney } from "@frodocodo/shared";
+import {
+  derivePaceDifference,
+  derivePaceStatus,
+  derivePaceStatusFromPacing,
+  derivePaceGradientPosition,
+  paceStatusLabel,
+  explainPaceStatus,
+  clampArcPercent,
+  type PacePosableInput,
+} from "../pacePosition.js";
 
 describe("derivePaceDifference", () => {
   it("is actual minus expected", () => {
@@ -86,6 +96,65 @@ describe("derivePaceGradientPosition", () => {
     for (let i = 1; i < positions.length; i++) {
       expect(positions[i]!).toBeGreaterThanOrEqual(positions[i - 1]!);
     }
+  });
+});
+
+/**
+ * `derivePaceStatusFromPacing` is the canonical adapter every UI/AI status
+ * surface now calls (Home's bucket cards, bucket-detail, Insights, the AI
+ * fact sheet) — these tests fix allocation at $100 so `expectedSpendToDate`
+ * dollars read directly as expected-percent points, letting the exact same
+ * boundary values `derivePaceStatus` is tested against above (-10, -3, 0,
+ * 3, 10) be hit precisely through the full PacingResult-shaped path,
+ * ±0.01 included.
+ */
+function pacingAt(percentConsumed: number, expectedSpendToDate: number): PacePosableInput {
+  return { percentConsumed, allocation: toMoney(100), expectedSpendToDate: toMoney(expectedSpendToDate) };
+}
+
+describe("derivePaceStatusFromPacing", () => {
+  it("matches derivePaceStatus at every named boundary and ±0.01 around it, composed from a PacingResult-shaped input", () => {
+    expect(derivePaceStatusFromPacing(pacingAt(40, 50))).toBe("COMFORTABLY_AHEAD"); // exactly -10
+    expect(derivePaceStatusFromPacing(pacingAt(39.99, 50))).toBe("COMFORTABLY_AHEAD"); // -10.01
+    expect(derivePaceStatusFromPacing(pacingAt(40.01, 50))).toBe("AHEAD_OF_PLAN"); // -9.99
+
+    expect(derivePaceStatusFromPacing(pacingAt(47, 50))).toBe("AHEAD_OF_PLAN"); // exactly -3
+    expect(derivePaceStatusFromPacing(pacingAt(46.99, 50))).toBe("AHEAD_OF_PLAN"); // -3.01
+    expect(derivePaceStatusFromPacing(pacingAt(47.01, 50))).toBe("ON_TRACK"); // -2.99
+
+    expect(derivePaceStatusFromPacing(pacingAt(50, 50))).toBe("ON_TRACK"); // exactly on pace
+
+    expect(derivePaceStatusFromPacing(pacingAt(52.99, 50))).toBe("ON_TRACK"); // 2.99
+    expect(derivePaceStatusFromPacing(pacingAt(53, 50))).toBe("SLIGHTLY_OVER_PACE"); // exactly +3
+    expect(derivePaceStatusFromPacing(pacingAt(53.01, 50))).toBe("SLIGHTLY_OVER_PACE"); // 3.01
+
+    expect(derivePaceStatusFromPacing(pacingAt(59.99, 50))).toBe("SLIGHTLY_OVER_PACE"); // 9.99
+    expect(derivePaceStatusFromPacing(pacingAt(60, 50))).toBe("OVER_PACE"); // exactly +10
+    expect(derivePaceStatusFromPacing(pacingAt(60.01, 50))).toBe("OVER_PACE"); // 10.01
+  });
+
+  it("classifies a $0-allocation category with real spend as ON_TRACK rather than dividing by zero — an existing, understood edge case", () => {
+    expect(derivePaceStatusFromPacing({ percentConsumed: 0, allocation: toMoney(0), expectedSpendToDate: toMoney(0) })).toBe("ON_TRACK");
+  });
+
+  it("agrees with Insights/AI's own inputs: the same PacingResult always classifies the same way regardless of which surface asks", () => {
+    const bucketPacing = pacingAt(65, 50); // clearly over pace
+    const totalPacing = pacingAt(65, 50); // a different surface, identical numbers
+    expect(derivePaceStatusFromPacing(bucketPacing)).toBe(derivePaceStatusFromPacing(totalPacing));
+    expect(derivePaceStatusFromPacing(bucketPacing)).toBe("OVER_PACE");
+  });
+});
+
+describe("explainPaceStatus", () => {
+  it("reports the same status derivePaceStatusFromPacing would, plus a plain-facts summary line", () => {
+    const explanation = explainPaceStatus({ ...pacingAt(65, 50), percentPeriodElapsed: 50.4 }, "flexible budget");
+    expect(explanation.status).toBe("OVER_PACE");
+    expect(explanation.summary).toBe("50% through the period · 65% of flexible budget used");
+  });
+
+  it("defaults the budget label to plain 'budget' when the caller doesn't say otherwise", () => {
+    const explanation = explainPaceStatus({ ...pacingAt(50, 50), percentPeriodElapsed: 50 });
+    expect(explanation.summary).toContain("of budget used");
   });
 });
 

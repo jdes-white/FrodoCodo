@@ -91,12 +91,16 @@ export default async function DashboardPage() {
  * communicates pace visually and the old "X% through the period · Y%
  * used" caption underneath is gone.
  *
- * This drives status/color through a *different* calculation than
- * spendPace.ts's SpendPaceStatus (dollar-variance against the whole
- * recurring-aware budget, used elsewhere e.g. Insights) — see
- * packages/domain/src/pacePosition.ts for the percentage-point-difference
- * system this ring specifically uses. The dollar figures in the center
- * (remaining/allocation/days) stay driven by the total budget, unchanged.
+ * Status/color come from the same canonical pace classification every
+ * other status pill in the app uses (packages/domain/src/pacePosition.ts —
+ * see its module doc comment), just fed the flexible-only budget as
+ * input: a fixed commitment posting on schedule isn't a pacing signal, so
+ * this ring deliberately excludes it, while Insights/bucket cards/the AI
+ * classify against their own full pacing instead. That's a difference of
+ * *input scope*, not a second status system — the same function, same
+ * thresholds, same labels and colors apply either way. The dollar figures
+ * in the center (remaining/allocation/days) stay driven by the total
+ * budget, unchanged.
  */
 function Panel1({
   firstName,

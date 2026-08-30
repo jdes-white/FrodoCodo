@@ -35,7 +35,7 @@ export interface BucketUpcomingData {
  * which are `Decimal` instances (CLAUDE.md rule #3), and a plain object
  * crossing a server→client boundary as a prop loses its prototype (its
  * methods like `.isZero()`/`.dividedBy()` disappear, breaking
- * deriveSpendPaceStatus). Everything this component receives is already
+ * derivePaceStatusFromPacing). Everything this component receives is already
  * plain serializable data — strings, numbers, `CommitmentCardData`/
  * `CategoryOption` objects with no Decimal or Date fields — so the
  * boundary is safe here.

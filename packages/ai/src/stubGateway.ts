@@ -1,3 +1,4 @@
+import { paceStatusLabel, type PaceStatus } from "@frodocodo/domain";
 import type { IntelligenceRequest, ModelGateway } from "./modelGateway.js";
 
 /**
@@ -17,28 +18,33 @@ export class StubGateway implements ModelGateway {
   }
 }
 
+/**
+ * Ascending "how concerning is this" order for `PaceStatus` — used only to
+ * pick which non-ON_TRACK buckets are worth calling out by name, most
+ * concerning first. Not a second classification: the wording itself
+ * always comes straight from `paceStatusLabel` below, never a
+ * hand-written per-branch phrase. A hand-written BEHIND/AHEAD branch here
+ * is exactly what previously described an overspending bucket as
+ * "running ahead of its expected pace" (the confirmed inversion bug this
+ * rewrite fixes) — reusing the same label the status pill shows makes
+ * that class of bug structurally impossible, not just corrected once.
+ */
+const PACE_STATUS_SEVERITY: PaceStatus[] = ["COMFORTABLY_AHEAD", "AHEAD_OF_PLAN", "ON_TRACK", "SLIGHTLY_OVER_PACE", "OVER_PACE"];
+
 function buildTemplateNarrative(request: IntelligenceRequest): string {
   const { factSheet } = request;
   const { totals } = factSheet;
 
-  const statusPhrase =
-    totals.status === "AHEAD"
-      ? "ahead of budget pace"
-      : totals.status === "BEHIND"
-        ? "behind budget pace"
-        : "on track";
-
   const lines: string[] = [
-    `At your current rate, the household has ${totals.remaining} remaining out of ${totals.allocation} for this period, and spending is ${statusPhrase}.`,
+    `At your current rate, the household has ${totals.remaining} remaining out of ${totals.allocation} for this period, and spending is ${paceStatusLabel(totals.status).toLowerCase()}.`,
   ];
 
-  const notable = [...factSheet.buckets].sort((a, b) => (a.status === "BEHIND" ? -1 : 1)).slice(0, 2);
+  const notable = [...factSheet.buckets]
+    .filter((b) => b.status !== "ON_TRACK")
+    .sort((a, b) => PACE_STATUS_SEVERITY.indexOf(b.status) - PACE_STATUS_SEVERITY.indexOf(a.status))
+    .slice(0, 2);
   for (const bucket of notable) {
-    if (bucket.status === "BEHIND") {
-      lines.push(`${bucket.name} is running ahead of its expected pace, with ${bucket.remaining} remaining.`);
-    } else if (bucket.status === "AHEAD") {
-      lines.push(`${bucket.name} is comfortably under pace, with ${bucket.remaining} remaining.`);
-    }
+    lines.push(`${bucket.name} is ${paceStatusLabel(bucket.status).toLowerCase()}, with ${bucket.remaining} remaining.`);
   }
 
   if (totals.projectedEndOfPeriod) {

@@ -1,4 +1,4 @@
-import type { PacingStatus } from "@frodocodo/shared";
+import type { PaceStatus } from "@frodocodo/domain";
 
 /**
  * The ONLY data the model ever sees for a request (§22). Every field here is
@@ -7,13 +7,20 @@ import type { PacingStatus } from "@frodocodo/shared";
  * history, or anything not required for the specific question being asked.
  * All money is pre-formatted to AUD strings so the response-validator can
  * check every dollar figure the model states against this exact set (§45).
+ *
+ * `status` is the same canonical `PaceStatus` (packages/domain/src/
+ * pacePosition.ts) every UI status pill uses — not a separate AI-only
+ * classification. This is what makes it possible to guarantee the AI can
+ * never describe a household's position differently than the pill sitting
+ * right next to its answer: both are the exact same enum value, computed
+ * by the exact same function, from the exact same PacingResult.
  */
 export interface BucketFact {
   name: string;
   allocation: string;
   spent: string;
   remaining: string;
-  status: PacingStatus;
+  status: PaceStatus;
   projectedEndOfPeriod?: string;
 }
 
@@ -39,7 +46,7 @@ export interface FinancialFactSheet {
     allocation: string;
     spent: string;
     remaining: string;
-    status: PacingStatus;
+    status: PaceStatus;
     projectedEndOfPeriod?: string;
   };
   buckets: BucketFact[];
