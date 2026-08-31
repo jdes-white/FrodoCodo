@@ -129,6 +129,24 @@ jobs:
           GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
         run: |
           set -euo pipefail
+
+          # A brand-new companion repo (the setup docs' "create a new
+          # private repo" step) has zero commits — and a Release needs a
+          # git tag, which needs at least one commit to point at, so the
+          # very first run against a freshly-created repo would otherwise
+          # fail with "422: Repository is empty." Self-heal it here with
+          # the same token this step already has, rather than requiring
+          # an extra manual "initialize the repo" step in the setup docs.
+          default_branch="$(gh api "repos/$BACKUP_REPO" --jq '.default_branch' 2>/dev/null || echo main)"
+          if ! gh api "repos/$BACKUP_REPO/git/refs/heads/$default_branch" >/dev/null 2>&1; then
+            echo "Backups repo has no commits yet — seeding an initial README so a Release can be tagged."
+            readme_content="$(printf '# FrodoCodo database backups\n\nSee docs/backup-recovery.md in the main FrodoCodo repo for the restore procedure.\n' | base64 -w0)"
+            gh api --method PUT "repos/$BACKUP_REPO/contents/README.md" \
+              -f message="Initialize repository (required before Releases can be created)" \
+              -f content="$readme_content" \
+              -f branch="$default_branch" >/dev/null
+          fi
+
           dump_file="$(ls ./backup-output/db-backup-*.dump.enc)"
           manifest_file="$(ls ./backup-output/db-backup-*.manifest.json)"
           tag="$(basename "$dump_file" .dump.enc)"
