@@ -1,1 +1,188 @@
-bmFtZTogRGF0YWJhc2UgYmFja3VwCgojIEluZGVwZW5kZW50LCBlbmNyeXB0ZWQgYmFja3VwcyBvZiB0aGUgcHJvZHVjdGlvbiBOZW9uIGRhdGFiYXNlIChzZWN1cml0eQojIGF1ZGl0IGZpbmRpbmcgQzMpLiBOZW9uJ3Mgb3duIHBvaW50LWluLXRpbWUgcmVjb3Zlcnkgb24gdGhlIEZyZWUgcGxhbiBpcwojIGNhcHBlZCBhdCA2IGhvdXJzIOKAlCB0aGlzIHdvcmtmbG93IGlzIHRoZSBsb25nZXItcmV0ZW50aW9uIGhhbGYgb2YgdGhlCiMgcmVjb3Zlcnkgc3RvcnksIHJ1bm5pbmcgZW50aXJlbHkgb24gR2l0SHViIEFjdGlvbnMgKGZyZWUgZm9yIHRoaXMKIyBwdWJsaWMgcmVwbydzIEFjdGlvbnMgbWludXRlcykgc28gaXQgbmVlZHMgbm8gUmVuZGVyIG9yIE5lb24gcGxhbgojIHVwZ3JhZGUuIFNlZSBkb2NzL2JhY2t1cC1yZWNvdmVyeS5tZCBmb3IgdGhlIGZ1bGwgZGVzaWduLCByZXRlbnRpb24KIyBwb2xpY3ksIGFuZCByZXN0b3JlIHByb2NlZHVyZS4KIwojIEV2ZXJ5IHJ1biByZXN0b3JlcyB0aGUgYmFja3VwIGl0IGp1c3QgdG9vayBpbnRvIGEgZGlzcG9zYWJsZSBQb3N0Z3JlcwojIHNlcnZpY2UgY29udGFpbmVyIChuZXZlciBwcm9kdWN0aW9uLCBuZXZlciBhbnkgcGVyc2lzdGVudCBkYXRhYmFzZSkgYW5kCiMgdmVyaWZpZXMgdGhlIHJlc3RvcmUgc3RydWN0dXJhbGx5IGFuZCBieSByb3cgY291bnQgYmVmb3JlIHB1Ymxpc2hpbmcKIyBhbnl0aGluZyDigJQgYSBiYWNrdXAgdGhhdCBmYWlscyB0aGF0IGNoZWNrIGlzIG5ldmVyIHVwbG9hZGVkLCBhbmQgdGhlCiMgam9iIGZhaWxzIGxvdWRseSAoYSBmYWlsZWQgc2NoZWR1bGVkIHdvcmtmbG93IHJ1biBzaG93cyB1cCBpbiB0aGUKIyByZXBvc2l0b3J5J3MgQWN0aW9ucyB0YWIsIGFuZCBHaXRIdWIgZW1haWxzIHRoZSByZXBvJ3Mgd2F0Y2hlcnMgYnkKIyBkZWZhdWx0KSBpbnN0ZWFkIG9mIHNpbGVudGx5ICJzdWNjZWVkaW5nIiB3aXRoIGEgYmFkIGJhY2t1cC4KIwojIEJhY2t1cHMgYXJlIHN0b3JlZCBhcyBSZWxlYXNlcyBpbiBhIHNlcGFyYXRlIFBSSVZBVEUgY29tcGFuaW9uIHJlcG8KIyAoZ2l0aHViLmNvbS9qZGVzLXdoaXRlL2Zyb2RvY29kby1iYWNrdXBzKSwgbmV2ZXIgaW4gdGhpcyByZXBvIOKAlCB0aGlzCiMgcmVwbyBpcyBwdWJsaWMsIGFuZCBhIGJhY2t1cCBvZiBob3VzZWhvbGQgZmluYW5jaWFsIGRhdGEgbXVzdCBub3QgYmUKIyBwdWJsaWNseSBhY2Nlc3NpYmxlLgoKb246CiAgc2NoZWR1bGU6CiAgICAtIGNyb246ICIwIDMgKiAqICoiICMgMDM6MDAgVVRDIGRhaWx5CiAgd29ya2Zsb3dfZGlzcGF0Y2g6IHt9ICMgYWxsb3cgbWFudWFsICJSdW4gd29ya2Zsb3ciIGZyb20gdGhlIEFjdGlvbnMgdGFiCgpwZXJtaXNzaW9uczoKICBjb250ZW50czogcmVhZAoKZW52OgogIEJBQ0tVUF9SRVBPOiBqZGVzLXdoaXRlL2Zyb2RvY29kby1iYWNrdXBzCiAgIyBTaW1wbGUgcm9sbGluZyByZXRlbnRpb246IGtlZXAgdGhlIG1vc3QgcmVjZW50IDMwIGRhaWx5IGJhY2t1cHMgKH4xCiAgIyBtb250aCkgYW5kIGRlbGV0ZSBhbnl0aGluZyBvbGRlciwgZXZlcnkgdGltZSBhIG5ldyBiYWNrdXAgc3VjY2VlZHMuCiAgIyBEZWxpYmVyYXRlbHkgbm90IGRlbGV0ZWQgYmVmb3JlIHRoZSBuZXcgYmFja3VwIGlzIGNvbmZpcm1lZCBnb29kLCBzbyBhCiAgIyBiYWQgcnVuIG5ldmVyIGxlYXZlcyB0aGUgaG91c2Vob2xkIHdpdGggZmV3ZXIgZ29vZCBiYWNrdXBzIHRoYW4gYmVmb3JlLgogIEJBQ0tVUF9SRVRFTlRJT05fQ09VTlQ6IDMwCgpqb2JzOgogIGJhY2t1cDoKICAgIHJ1bnMtb246IHVidW50dS1sYXRlc3QKICAgIHRpbWVvdXQtbWludXRlczogMTUKCiAgICAjIERpc3Bvc2FibGUgUG9zdGdyZXMgdXNlZCBPTkxZIHRvIHByb3ZlIHRoZSBiYWNrdXAganVzdCB0YWtlbiBjYW4KICAgICMgYWN0dWFsbHkgYmUgcmVzdG9yZWQg4oCUIHRoaXMgY29udGFpbmVyIGlzIGRlc3Ryb3llZCB3aGVuIHRoZSBqb2IKICAgICMgZW5kcyBhbmQgaXMgbmV2ZXIgcmVhY2hhYmxlIGZyb20gb3V0c2lkZSB0aGlzIGpvYi4KICAgIHNlcnZpY2VzOgogICAgICBwb3N0Z3JlczoKICAgICAgICBpbWFnZTogcG9zdGdyZXM6MTYtYWxwaW5lCiAgICAgICAgZW52OgogICAgICAgICAgUE9TVEdSRVNfVVNFUjogdmVyaWZ5CiAgICAgICAgICBQT1NUR1JFU19QQVNTV09SRDogdmVyaWZ5CiAgICAgICAgICBQT1NUR1JFU19EQjogdmVyaWZ5CiAgICAgICAgcG9ydHM6CiAgICAgICAgICAtIDU0MzI6NTQzMgogICAgICAgIG9wdGlvbnM6ID4tCiAgICAgICAgICAtLWhlYWx0aC1jbWQgInBnX2lzcmVhZHkgLVUgdmVyaWZ5IgogICAgICAgICAgLS1oZWFsdGgtaW50ZXJ2YWwgNXMKICAgICAgICAgIC0taGVhbHRoLXRpbWVvdXQgNXMKICAgICAgICAgIC0taGVhbHRoLXJldHJpZXMgMTAKCiAgICBzdGVwczoKICAgICAgLSBuYW1lOiBDaGVja291dAogICAgICAgIHVzZXM6IGFjdGlvbnMvY2hlY2tvdXRANAoKICAgICAgLSBuYW1lOiBJbnN0YWxsIFBvc3RncmVzIGNsaWVudCB0b29scwogICAgICAgIHJ1bjogc3VkbyBhcHQtZ2V0IHVwZGF0ZSAmJiBzdWRvIGFwdC1nZXQgaW5zdGFsbCAteSAtLW5vLWluc3RhbGwtcmVjb21tZW5kcyBwb3N0Z3Jlc3FsLWNsaWVudCBqcQoKICAgICAgLSBuYW1lOiBDcmVhdGUgYmFja3VwCiAgICAgICAgZW52OgogICAgICAgICAgQkFDS1VQX1NPVVJDRV9EQVRBQkFTRV9VUkw6ICR7eyBzZWNyZXRzLkJBQ0tVUF9TT1VSQ0VfREFUQUJBU0VfVVJMIH19CiAgICAgICAgICBCQUNLVVBfRU5DUllQVElPTl9LRVk6ICR7eyBzZWNyZXRzLkJBQ0tVUF9FTkNSWVBUSU9OX0tFWSB9fQogICAgICAgICAgQkFDS1VQX09VVFBVVF9ESVI6IC4vYmFja3VwLW91dHB1dAogICAgICAgIHJ1bjogYmFzaCBwYWNrYWdlcy9kYi9zY3JpcHRzL2JhY2t1cC9jcmVhdGUtYmFja3VwLnNoCgogICAgICAtIG5hbWU6IFJlc3RvcmUgaW50byBkaXNwb3NhYmxlIHZlcmlmaWNhdGlvbiBkYXRhYmFzZQogICAgICAgIGVudjoKICAgICAgICAgIFJFU1RPUkVfVEFSR0VUX0RBVEFCQVNFX1VSTDogcG9zdGdyZXNxbDovL3ZlcmlmeTp2ZXJpZnlAbG9jYWxob3N0OjU0MzIvdmVyaWZ5CiAgICAgICAgICBCQUNLVVBfRU5DUllQVElPTl9LRVk6ICR7eyBzZWNyZXRzLkJBQ0tVUF9FTkNSWVBUSU9OX0tFWSB9fQogICAgICAgIHJ1bjogYmFzaCBwYWNrYWdlcy9kYi9zY3JpcHRzL2JhY2t1cC9yZXN0b3JlLWJhY2t1cC5zaCAuL2JhY2t1cC1vdXRwdXQvZGItYmFja3VwLSouZHVtcC5lbmMKCiAgICAgIC0gbmFtZTogVmVyaWZ5IHJlc3RvcmVkIGRhdGFiYXNlIG1hdGNoZXMgbWFuaWZlc3QKICAgICAgICBlbnY6CiAgICAgICAgICBSRVNUT1JFX1RBUkdFVF9EQVRBQkFTRV9VUkw6IHBvc3RncmVzcWw6Ly92ZXJpZnk6dmVyaWZ5QGxvY2FsaG9zdDo1NDMyL3ZlcmlmeQogICAgICAgIHJ1bjogYmFzaCBwYWNrYWdlcy9kYi9zY3JpcHRzL2JhY2t1cC92ZXJpZnktZGF0YWJhc2Uuc2ggLi9iYWNrdXAtb3V0cHV0L2RiLWJhY2t1cC0qLm1hbmlmZXN0Lmpzb24KCiAgICAgIC0gbmFtZTogUHVibGlzaCBiYWNrdXAgdG8gdGhlIHByaXZhdGUgYmFja3VwcyByZXBvCiAgICAgICAgZW52OgogICAgICAgICAgR0hfVE9LRU46ICR7eyBzZWNyZXRzLkJBQ0tVUF9SRVBPX1RPS0VOIH19CiAgICAgICAgcnVuOiB8CiAgICAgICAgICBzZXQgLWV1byBwaXBlZmFpbAogICAgICAgICAgZHVtcF9maWxlPSIkKGxzIC4vYmFja3VwLW91dHB1dC9kYi1iYWNrdXAtKi5kdW1wLmVuYykiCiAgICAgICAgICBtYW5pZmVzdF9maWxlPSIkKGxzIC4vYmFja3VwLW91dHB1dC9kYi1iYWNrdXAtKi5tYW5pZmVzdC5qc29uKSIKICAgICAgICAgIHRhZz0iJChiYXNlbmFtZSAiJGR1bXBfZmlsZSIgLmR1bXAuZW5jKSIKICAgICAgICAgIGdoIHJlbGVhc2UgY3JlYXRlICIkdGFnIiBcCiAgICAgICAgICAgIC0tcmVwbyAiJEJBQ0tVUF9SRVBPIiBcCiAgICAgICAgICAgIC0tdGl0bGUgIiR0YWciIFwKICAgICAgICAgICAgLS1ub3RlcyAiQXV0b21hdGVkIEZyb2RvQ29kbyBkYXRhYmFzZSBiYWNrdXAuIFNlZSBkb2NzL2JhY2t1cC1yZWNvdmVyeS5tZCBpbiB0aGUgbWFpbiByZXBvIGZvciB0aGUgcmVzdG9yZSBwcm9jZWR1cmUuIiBcCiAgICAgICAgICAgICIkZHVtcF9maWxlIiAiJG1hbmlmZXN0X2ZpbGUiCgogICAgICAtIG5hbWU6IFBydW5lIG9sZCBiYWNrdXBzIGJleW9uZCByZXRlbnRpb24KICAgICAgICBlbnY6CiAgICAgICAgICBHSF9UT0tFTjogJHt7IHNlY3JldHMuQkFDS1VQX1JFUE9fVE9LRU4gfX0KICAgICAgICBydW46IHwKICAgICAgICAgIHNldCAtZXVvIHBpcGVmYWlsCiAgICAgICAgICBhbGxfdGFncz0iJChnaCByZWxlYXNlIGxpc3QgLS1yZXBvICIkQkFDS1VQX1JFUE8iIC0tbGltaXQgMTAwMCAtLWpzb24gdGFnTmFtZSxjcmVhdGVkQXQgfCBqcSAtciAnc29ydF9ieSguY3JlYXRlZEF0KSB8IHJldmVyc2UgfCAuW10udGFnTmFtZScpIgogICAgICAgICAgdG9fZGVsZXRlPSIkKGVjaG8gIiRhbGxfdGFncyIgfCB0YWlsIC1uICsiJCgoQkFDS1VQX1JFVEVOVElPTl9DT1VOVCArIDEpKSIpIgogICAgICAgICAgaWYgWyAteiAiJHRvX2RlbGV0ZSIgXTsgdGhlbgogICAgICAgICAgICBlY2hvICJOb3RoaW5nIHRvIHBydW5lIChhdCBvciB1bmRlciByZXRlbnRpb24gbGltaXQgb2YgJEJBQ0tVUF9SRVRFTlRJT05fQ09VTlQpLiIKICAgICAgICAgICAgZXhpdCAwCiAgICAgICAgICBmaQogICAgICAgICAgd2hpbGUgSUZTPSByZWFkIC1yIG9sZF90YWc7IGRvCiAgICAgICAgICAgIFsgLXogIiRvbGRfdGFnIiBdICYmIGNvbnRpbnVlCiAgICAgICAgICAgIGVjaG8gIkRlbGV0aW5nIG9sZCBiYWNrdXA6ICRvbGRfdGFnIgogICAgICAgICAgICBnaCByZWxlYXNlIGRlbGV0ZSAiJG9sZF90YWciIC0tcmVwbyAiJEJBQ0tVUF9SRVBPIiAtLXllcyAtLWNsZWFudXAtdGFnCiAgICAgICAgICBkb25lIDw8PCAiJHRvX2RlbGV0ZSIK
+name: Database backup
+
+# Independent, encrypted backups of the production Neon database (security
+# audit finding C3). Neon's own point-in-time recovery on the Free plan is
+# capped at 6 hours — this workflow is the longer-retention half of the
+# recovery story, running entirely on GitHub Actions (free for this
+# public repo's Actions minutes) so it needs no Render or Neon plan
+# upgrade. See docs/backup-recovery.md for the full design, retention
+# policy, and restore procedure.
+#
+# Every run restores the backup it just took into a disposable Postgres
+# service container (never production, never any persistent database) and
+# verifies the restore structurally and by row count before publishing
+# anything — a backup that fails that check is never uploaded, and the
+# job fails loudly (a failed scheduled workflow run shows up in the
+# repository's Actions tab, and GitHub emails the repo's watchers by
+# default) instead of silently "succeeding" with a bad backup.
+#
+# Backups are stored as Releases in a separate PRIVATE companion repo
+# (github.com/jdes-white/frodocodo-backups), never in this repo — this
+# repo is public, and a backup of household financial data must not be
+# publicly accessible.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily
+  workflow_dispatch: {} # allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: read
+
+env:
+  BACKUP_REPO: jdes-white/frodocodo-backups
+  # Simple rolling retention: keep the most recent 30 daily backups (~1
+  # month) and delete anything older, every time a new backup succeeds.
+  # Deliberately not deleted before the new backup is confirmed good, so a
+  # bad run never leaves the household with fewer good backups than before.
+  BACKUP_RETENTION_COUNT: 30
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Disposable Postgres used ONLY to prove the backup just taken can
+    # actually be restored — this container is destroyed when the job
+    # ends and is never reachable from outside this job. Pinned to the
+    # same major version as production Neon (17) — pg_dump refuses to
+    # dump from a *newer* server than itself, and restoring a dump taken
+    # from a newer server into an older one risks subtle DDL/feature
+    # incompatibilities, so client tools and this container both need to
+    # track Neon's actual major version, not whatever Ubuntu's default
+    # package happens to be.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: verify
+          POSTGRES_PASSWORD: verify
+          POSTGRES_DB: verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U verify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      # Pinned explicitly: GitHub always evaluates a `schedule` trigger's
+      # workflow file *and* its default `actions/checkout` ref against the
+      # repo's default branch, regardless of which branch this workflow
+      # file's own real content lives on. This repo's default branch
+      # (main) intentionally carries no application code at all — Render
+      # deploys from claude/household-financial-os-90nezc, per
+      # docs/deployment.md — so leaving this unset would make every
+      # scheduled (non-manual) run check out a branch with none of the
+      # backup scripts this workflow calls. Pinning it here means the
+      # *file registered on main* only ever needs to declare this pin
+      # correctly once; every actual run, scheduled or manual, always
+      # executes the real, current, maintained branch's content.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: claude/household-financial-os-90nezc
+
+      - name: Install Postgres 17 client tools
+        # ubuntu-latest's default "postgresql-client" package only ever
+        # tracks one fixed major version (16 on the noble/24.04 image this
+        # workflow currently runs on) — not necessarily whatever major
+        # version Neon is actually running. The official PGDG apt
+        # repository (via postgresql-common's own setup script — the
+        # method postgresql.org's own download page recommends) provides
+        # every still-supported major version explicitly, so this installs
+        # postgresql-client-17 by name regardless of what the runner image
+        # defaults to, keeping this correct even if Neon or the runner
+        # image's default changes later.
+        #
+        # ubuntu-latest ships its own postgresql-client (v16) pre-baked
+        # into the image already, ahead of PGDG's package on PATH — so
+        # merely installing postgresql-client-17 alongside it isn't
+        # enough; /usr/bin/pg_dump kept resolving to the pre-baked v16
+        # binary even after this step installed v17 (confirmed by an
+        # actual failed run: "pg_dump version: 16.15" after this exact
+        # apt install succeeded). Explicitly prepending the versioned
+        # PGDG install directory to $GITHUB_PATH — the supported way to
+        # change PATH for every later step in this job — removes the
+        # ambiguity instead of relying on update-alternatives to have
+        # already resolved it correctly.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-common ca-certificates
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-17 jq
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm pg_dump resolves to the intended version
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          pg_dump --version
+          pg_restore --version
+
+      - name: Create backup
+        env:
+          BACKUP_SOURCE_DATABASE_URL: ${{ secrets.BACKUP_SOURCE_DATABASE_URL }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          BACKUP_OUTPUT_DIR: ./backup-output
+        run: bash packages/db/scripts/backup/create-backup.sh
+
+      - name: Restore into disposable verification database
+        env:
+          RESTORE_TARGET_DATABASE_URL: postgresql://verify:verify@localhost:5432/verify
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: bash packages/db/scripts/backup/restore-backup.sh ./backup-output/db-backup-*.dump.enc
+
+      - name: Verify restored database matches manifest
+        env:
+          RESTORE_TARGET_DATABASE_URL: postgresql://verify:verify@localhost:5432/verify
+        run: bash packages/db/scripts/backup/verify-database.sh ./backup-output/db-backup-*.manifest.json
+
+      - name: Publish backup to the private backups repo
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # A brand-new companion repo (the setup docs' "create a new
+          # private repo" step) has zero commits — and a Release needs a
+          # git tag, which needs at least one commit to point at, so the
+          # very first run against a freshly-created repo would otherwise
+          # fail with "422: Repository is empty." Self-heal it here with
+          # the same token this step already has, rather than requiring
+          # an extra manual "initialize the repo" step in the setup docs.
+          default_branch="$(gh api "repos/$BACKUP_REPO" --jq '.default_branch' 2>/dev/null || echo main)"
+          if ! gh api "repos/$BACKUP_REPO/git/refs/heads/$default_branch" >/dev/null 2>&1; then
+            echo "Backups repo has no commits yet — seeding an initial README so a Release can be tagged."
+            readme_content="$(printf '# FrodoCodo database backups\n\nSee docs/backup-recovery.md in the main FrodoCodo repo for the restore procedure.\n' | base64 -w0)"
+            gh api --method PUT "repos/$BACKUP_REPO/contents/README.md" \
+              -f message="Initialize repository (required before Releases can be created)" \
+              -f content="$readme_content" \
+              -f branch="$default_branch" >/dev/null
+          fi
+
+          dump_file="$(ls ./backup-output/db-backup-*.dump.enc)"
+          manifest_file="$(ls ./backup-output/db-backup-*.manifest.json)"
+          tag="$(basename "$dump_file" .dump.enc)"
+          gh release create "$tag" \
+            --repo "$BACKUP_REPO" \
+            --title "$tag" \
+            --notes "Automated FrodoCodo database backup. See docs/backup-recovery.md in the main repo for the restore procedure." \
+            "$dump_file" "$manifest_file"
+
+      - name: Prune old backups beyond retention
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          all_tags="$(gh release list --repo "$BACKUP_REPO" --limit 1000 --json tagName,createdAt | jq -r 'sort_by(.createdAt) | reverse | .[].tagName')"
+          to_delete="$(echo "$all_tags" | tail -n +"$((BACKUP_RETENTION_COUNT + 1))")"
+          if [ -z "$to_delete" ]; then
+            echo "Nothing to prune (at or under retention limit of $BACKUP_RETENTION_COUNT)."
+            exit 0
+          fi
+          while IFS= read -r old_tag; do
+            [ -z "$old_tag" ] && continue
+            echo "Deleting old backup: $old_tag"
+            gh release delete "$old_tag" --repo "$BACKUP_REPO" --yes --cleanup-tag
+          done <<< "$to_delete"
