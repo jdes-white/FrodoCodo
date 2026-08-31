@@ -38,6 +38,33 @@ const PENDING_TO_POSTED_MATCH_WINDOW_DAYS = 5;
  * already in the ledger for this account. Never inserts a second row for a
  * transaction that already exists, and never double-counts a pending
  * transaction once it posts.
+ *
+ * Source-agnostic by construction (Task 6B): every field this function
+ * reads — accountId, providerTransactionId, date, amount, direction,
+ * status — is something any ingestion source can supply (a live
+ * provider sync, a future CSV import, a future screenshot import), via
+ * `packages/ledger/src/ingestion.ts`'s normalized shape. No source-specific
+ * branching exists or should be added here.
+ *
+ * Where exact matching ends today, deliberately: the providerTransactionId
+ * exact-match path and the pending→posted heuristic (below) both require
+ * an *existing* row to reconcile against, and the heuristic only matches
+ * against an existing row that is still PENDING. Two different sources
+ * both reporting the same real-world transaction as already POSTED — e.g.
+ * a future CSV import of a transaction a live CDR sync already landed —
+ * is NOT resolved by this function, on purpose: without a shared stable ID
+ * or a merchant/description signal, collapsing two POSTED, same-account,
+ * same-amount, same-direction, same-day rows risks silently discarding a
+ * genuine second purchase that happens to match by coincidence (rent-
+ * splitting, two identical grocery runs, etc.) — exactly the failure mode
+ * the task's reversal/transfer logic is careful to avoid elsewhere. Closing
+ * this gap safely needs either a real shared stable key across sources (the
+ * strong fix) or a household-facing "possible duplicate — confirm" review
+ * step (matching the existing "always classify this way" / MerchantRule
+ * pattern of never silently overriding without the option to correct) —
+ * both are future work, not attempted here; see
+ * docs/banking-data-minimisation-audit.md and the Task 6B report for the
+ * full reasoning. Fuzzy/AI-based matching is explicitly out of scope.
  */
 export function resolveDedupe(
   candidate: CandidateTransaction,

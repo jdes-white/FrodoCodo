@@ -12,7 +12,7 @@ import type {
 
 export const MOCK_INSTITUTIONS: ProviderInstitution[] = [
   { providerInstitutionId: "cba", name: "Commonwealth Bank of Australia", shortName: "CBA", connectionMethod: "CDR" },
-  { providerInstitutionId: "virgin-money-au", name: "Virgin Money Australia", shortName: "Virgin Money", connectionMethod: "CDR" },
+  { providerInstitutionId: "virgin-money-au", name: "Virgin Money Australia", shortName: "Virgin", connectionMethod: "CDR" },
   { providerInstitutionId: "amex-au", name: "American Express Australia", shortName: "Amex", connectionMethod: "CREDENTIAL_BASED" },
 ];
 

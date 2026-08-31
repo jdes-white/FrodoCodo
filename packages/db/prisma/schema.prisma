@@ -99,6 +99,16 @@ enum ClassificationSource {
   SYSTEM
 }
 
+// Which ingestion pipeline produced a Transaction row (Task 6B). New
+// sources (CSV, screenshot OCR) plug into the same normalized pipeline —
+// see packages/ledger/src/ingestion.ts — without needing a parallel
+// transaction model or a downstream code path that cares which source ran.
+enum TransactionSourceType {
+  PROVIDER_SYNC
+  CSV_IMPORT
+  SCREENSHOT_IMPORT
+}
+
 enum SpendingType {
   FIXED_COMMITMENT
   FLEXIBLE
@@ -287,10 +297,33 @@ model FinancialConnection {
 model Account {
   id                  String      @id @default(cuid())
   connectionId        String
+  // Opaque, aggregator-issued identifier — never a bank-format account
+  // number. This plus the household/FrodoCodo alias below is the entire
+  // permanent identity of a connected account (Task 6B data-minimisation).
   providerAccountId   String
-  displayName         String
+  // The household-facing label ("CBA", "Virgin", "Amex") — never the
+  // provider's own account nickname. A real CDR/aggregator response can
+  // embed a masked-account-number fragment in its nickname string (e.g.
+  // "Complete Access ...1234"), which is exactly the kind of banking-
+  // identity fragment this product must not surface or persist (see
+  // docs/banking-data-minimisation-audit.md §3/§5). New accounts get a
+  // default derived from the institution's short name
+  // (packages/ledger/src/accountAlias.ts), never from the provider's own
+  // string; the household can rename it. This column was named
+  // `displayName` before Task 6B and held the provider's raw nickname —
+  // renamed (not recreated) so every existing account's current value
+  // carries over untouched.
+  alias               String
+  // Retained deliberately (Task 6B data-minimisation review): drives
+  // transfer-pair/repayment detection (packages/ledger/src/transferDetection.ts)
+  // and account grouping in the UI — a genuine required feature, not
+  // provider metadata carried along for its own sake.
   accountType         AccountType
   currency            String      @default("AUD")
+  // Retained deliberately: "how much do we have left" is the product's
+  // first question (CLAUDE.md) and cannot be answered without a balance.
+  // A monetary figure carries none of the banking-identity sensitivity
+  // (account number, BSB, holder name) this audit targets.
   currentBalance      Decimal?    @db.Decimal(14, 2)
   availableBalance    Decimal?    @db.Decimal(14, 2)
   isIncludedInBudget  Boolean     @default(true)
@@ -533,7 +566,13 @@ model Transaction {
   accountId              String
   syncRunId              String?
   providerTransactionId  String?
-  institutionTransactionRef String?
+  // Which pipeline produced this row (Task 6B, packages/ledger/src/ingestion.ts)
+  // — lets the ledger distinguish a live provider sync from a future CSV or
+  // screenshot import without the categorisation/budgeting engine needing
+  // to know or care which. Every existing row defaults to PROVIDER_SYNC,
+  // which is accurate for all of them: there is no other ingestion path
+  // wired up yet.
+  sourceType             TransactionSourceType @default(PROVIDER_SYNC)
 
   transactionDate  DateTime @db.Date
   postingDate      DateTime? @db.Date
@@ -570,12 +609,20 @@ model Transaction {
   isTransfer          Boolean @default(false)
   transferGroupId     String?
   counterpartTransactionId String? @unique
+  // A same-account, equal-and-opposite reversal of an earlier transaction
+  // on this same account (e.g. a declined/reversed card purchase) — Task
+  // 6A's specific gap: distinct from isTransfer (which always crosses
+  // accounts) and from refundOfTransactionId (merchant-matched, often
+  // weeks later, a separate spend-still-happened-but-was-later-refunded
+  // chain). See packages/ledger/src/reversalDetection.ts. Set on both
+  // legs of a matched reversal pair; counterpartTransactionId links the
+  // earlier (original) leg to the later (reversal) leg, the same way it
+  // links a transfer's debit leg to its credit leg.
+  isReversal          Boolean @default(false)
 
   isExcludedFromBudget Boolean @default(false)
 
   refundOfTransactionId String?
-
-  rawProviderPayload Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -32,12 +32,17 @@ household in Settings — see `docs/provider-integration.md` for why Amex is
 
 ## Canonical transaction (§9)
 
-`Transaction` carries both the normalized fields the app uses everywhere
+`Transaction` carries the normalized fields the app uses everywhere
 (`amount` + `direction`, always a positive `Decimal` magnitude plus
 DEBIT/CREDIT rather than a signed number, `normalizedMerchantId`,
-`categoryId`) and a `rawProviderPayload Json` column preserving exactly what
-the provider sent, for audit/debugging — normalization never destroys the
-original description (`originalDescription` is always kept).
+`categoryId`) — normalization never destroys the original description
+(`originalDescription` is always kept). There is deliberately no raw-
+provider-payload column: Task 6B's data-minimisation pass removed it once
+real transaction ingestion was designed for, on the principle that data
+FrodoCodo never retains cannot later leak — see
+`docs/banking-data-minimisation-audit.md` and
+`packages/ledger/src/ingestion.ts`'s explicit field allow-list, which is
+the only path any source's transaction data can take into this table.
 
 Integrity fields:
 

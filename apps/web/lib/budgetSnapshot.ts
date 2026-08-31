@@ -84,7 +84,7 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
     netSpendByCategory(householdId, period.startDate, period.endDate),
     netSpendByCategory(householdId, trailingSince, asOf),
     prisma.fixedCommitment.findMany({ where: { householdId, isActive: true } }),
-    prisma.account.findMany({ where: { connection: { householdId } }, select: { lastSyncedAt: true, displayName: true } }),
+    prisma.account.findMany({ where: { connection: { householdId } }, select: { lastSyncedAt: true, alias: true } }),
   ]);
 
   const fixedByCategory = new Map(fixedCommitments.map((f) => [f.categoryId, f]));
@@ -251,7 +251,7 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
   const staleCutoff = new Date(Date.now() - STALE_SYNC_HOURS * 60 * 60 * 1000);
   const staleSyncAccountNames = accounts
     .filter((a) => !a.lastSyncedAt || a.lastSyncedAt < staleCutoff)
-    .map((a) => a.displayName);
+    .map((a) => a.alias);
 
   return { period, budgetPeriodId: budgetPeriod.id, asOf, totalPacing, flexibleBudget, buckets, lastSyncedAt, staleSyncAccountNames };
 }

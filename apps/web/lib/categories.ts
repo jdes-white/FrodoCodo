@@ -13,6 +13,6 @@ export async function listAccounts(householdId: string) {
   return prisma.account.findMany({
     where: { connection: { householdId } },
     include: { connection: { include: { institution: true } } },
-    orderBy: { displayName: "asc" },
+    orderBy: { alias: "asc" },
   });
 }

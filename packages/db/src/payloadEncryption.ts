@@ -2,29 +2,36 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { logDbEvent } from "./dbErrors.js";
 
 /**
- * Application-level authenticated encryption for `Transaction.rawProviderPayload`
- * (security audit finding H3). This column preserves a provider's raw sync
- * response verbatim for audit/debugging — currently harmless synthetic mock
- * data, but the highest-sensitivity column in the schema the moment a real
- * banking provider is ever wired up, since it may carry more of the
- * provider's original response than the normalized fields do.
+ * General-purpose application-level authenticated encryption envelope,
+ * originally built for `Transaction.rawProviderPayload` (security audit
+ * finding H3). That column no longer exists: Task 6B's data-minimisation
+ * pass removed raw-provider-payload storage from the ingestion path
+ * entirely (see apps/worker/src/syncConnection.ts,
+ * packages/db/src/seedHousehold.ts, and
+ * docs/banking-data-minimisation-audit.md) rather than continuing to
+ * encrypt-and-keep it — data FrodoCodo never retains cannot later leak,
+ * which is a stronger guarantee than encryption-at-rest alone.
  *
- * `rawProviderPayload` stays a plain `Json?` column — no schema change is
- * needed, only what gets put into it: instead of the payload itself, an
- * envelope `{ v, alg, iv, authTag, ciphertext }` produced by AES-256-GCM
- * (authenticated encryption, not just encoding — a tampered or truncated
- * envelope fails to decrypt rather than silently returning garbage).
+ * This utility is kept (not tied to any specific column) because it's
+ * exactly the mechanism a future need identified in the Task 6A audit will
+ * require: encrypting a provider/CDR access or refresh token at rest once
+ * a real banking connection exists (docs/banking-data-minimisation-audit.md
+ * §8 — a stolen token is the single most sensitive thing FrodoCodo would
+ * ever hold). Nothing in this codebase calls `encryptForStorage`/
+ * `decryptFromStorage` today; `packages/db/src/__tests__/payloadEncryption.test.ts`
+ * exercises the utility directly.
+ *
+ * Produces an envelope `{ v, alg, iv, authTag, ciphertext }` via
+ * AES-256-GCM (authenticated encryption, not just encoding — a tampered or
+ * truncated envelope fails to decrypt rather than silently returning
+ * garbage).
  *
  * The key comes from TRANSACTION_PAYLOAD_ENCRYPTION_KEY (base64, 32 bytes)
  * only — never hardcoded, never committed. When it's missing:
  *  - in production, encryptForStorage throws rather than ever persisting a
- *    payload as plaintext (fail closed — this is the environment where
- *    real provider payloads would actually land).
- *  - outside production (no real provider is wired anywhere in this repo
- *    yet), it returns undefined so the column is simply left null instead
- *    of storing plaintext — MockProvider's synthetic payload is discarded,
- *    not exposed, and every current caller already treats this field as
- *    optional/never-displayed, so nothing depends on it being populated.
+ *    payload as plaintext (fail closed).
+ *  - outside production, it returns undefined rather than storing
+ *    plaintext.
  */
 
 const ALGORITHM = "aes-256-gcm";

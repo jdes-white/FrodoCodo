@@ -1,4 +1,4 @@
-import { prisma, encryptForStorage } from "@frodocodo/db";
+import { prisma } from "@frodocodo/db";
 import { toMoney, formatCalendarDate } from "@frodocodo/shared";
 import {
   normalizeMerchant,
@@ -6,7 +6,9 @@ import {
   classifyDeterministic,
   resolveClassification,
   detectTransferPairs,
+  detectReversals,
   detectRefunds,
+  toIngestibleTransactionFields,
   type ExistingTransactionRef,
 } from "@frodocodo/ledger";
 import type { FinancialDataProvider } from "@frodocodo/providers";
@@ -75,15 +77,32 @@ export async function syncConnection(provider: FinancialDataProvider, connection
         status: t.status,
       }));
 
+      // The one sanctioned path from a provider's raw transaction shape
+      // into what FrodoCodo will persist (Task 6B) -- `tx.raw` (the
+      // provider's full response for this transaction) is never read
+      // again past this point, and everything downstream operates only on
+      // `ingestible`'s explicit allow-listed fields.
+      const ingestible = toIngestibleTransactionFields({
+        sourceAccountId: tx.accountProviderId,
+        sourceTransactionId: tx.providerTransactionId,
+        transactionDate: tx.transactionDate,
+        postingDate: tx.postingDate,
+        amount: tx.amount,
+        direction: tx.direction,
+        status: tx.status,
+        description: tx.description,
+        sourceType: "PROVIDER_SYNC",
+      });
+
       const decision = resolveDedupe(
         {
           accountId: account.id,
-          providerTransactionId: tx.providerTransactionId,
-          transactionDate: tx.transactionDate,
-          amount: tx.amount,
-          direction: tx.direction,
-          status: tx.status,
-          originalDescription: tx.description,
+          providerTransactionId: ingestible.providerTransactionId,
+          transactionDate: ingestible.transactionDate,
+          amount: ingestible.amount,
+          direction: ingestible.direction,
+          status: ingestible.status,
+          originalDescription: ingestible.originalDescription,
         },
         existingForAccount,
       );
@@ -93,13 +112,13 @@ export async function syncConnection(provider: FinancialDataProvider, connection
       if (decision.action === "UPDATE_STATUS_TO_POSTED") {
         await prisma.transaction.update({
           where: { id: decision.existingId },
-          data: { status: "POSTED", postingDate: tx.postingDate ? new Date(tx.postingDate) : new Date(tx.transactionDate) },
+          data: { status: "POSTED", postingDate: ingestible.postingDate ? new Date(ingestible.postingDate) : new Date(ingestible.transactionDate) },
         });
         updated++;
         continue;
       }
 
-      const merchant = normalizeMerchant(tx.description);
+      const merchant = normalizeMerchant(ingestible.originalDescription);
       const merchantRow = await prisma.merchant.upsert({
         where: { householdId_matchKey: { householdId: connection.householdId, matchKey: merchant.matchKey } },
         update: {},
@@ -123,13 +142,14 @@ export async function syncConnection(provider: FinancialDataProvider, connection
       await prisma.transaction.create({
         data: {
           accountId: account.id,
-          providerTransactionId: tx.providerTransactionId,
-          transactionDate: new Date(tx.transactionDate),
-          postingDate: tx.postingDate ? new Date(tx.postingDate) : null,
-          amount: tx.amount.toNumber(),
-          direction: tx.direction,
-          status: tx.status,
-          originalDescription: tx.description,
+          providerTransactionId: ingestible.providerTransactionId,
+          transactionDate: new Date(ingestible.transactionDate),
+          postingDate: ingestible.postingDate ? new Date(ingestible.postingDate) : null,
+          amount: ingestible.amount.toNumber(),
+          direction: ingestible.direction,
+          status: ingestible.status,
+          originalDescription: ingestible.originalDescription,
+          sourceType: ingestible.sourceType,
           normalizedMerchantId: merchantRow.id,
           merchantConfidence: merchant.confidence,
           categoryId: classification.status === "CLASSIFIED" ? classification.categoryId : null,
@@ -144,15 +164,22 @@ export async function syncConnection(provider: FinancialDataProvider, connection
           suggestedCategorySource: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessSource ?? null) : null,
           suggestedCategoryConfidence: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessConfidence ?? null) : null,
           syncRunId: syncRun.id,
-          // Never stored as plaintext (security audit finding H3) — see
-          // packages/db/src/payloadEncryption.ts.
-          rawProviderPayload: (encryptForStorage(tx.raw) ?? null) as never,
+          // No rawProviderPayload field exists anymore (Task 6B): the
+          // provider's raw response for this transaction (tx.raw) was
+          // already discarded above once `ingestible` was built from it —
+          // data FrodoCodo never retains cannot later leak, which is a
+          // stronger guarantee than encrypting it at rest ever was (the H3
+          // encryption utility, packages/db/src/payloadEncryption.ts,
+          // remains available as a general-purpose utility for other
+          // sensitive-at-rest data, e.g. a future provider access token —
+          // see docs/banking-data-minimisation-audit.md §8 — but nothing
+          // in the transaction ingestion path uses it anymore).
         },
       });
       imported++;
     }
 
-    await reconcileTransfersAndRefunds(connection.householdId);
+    await reconcileTransferReversalsAndRefunds(connection.householdId);
 
     await prisma.financialConnection.update({ where: { id: connectionId }, data: { lastSyncedAt: new Date() } });
     await prisma.syncRun.update({
@@ -175,10 +202,21 @@ export async function syncConnection(provider: FinancialDataProvider, connection
   }
 }
 
-/** Re-runs the real ledger reconciliation logic (not a re-implementation) across the household's transactions. */
-async function reconcileTransfersAndRefunds(householdId: string): Promise<void> {
+/**
+ * Re-runs the real ledger reconciliation logic (not a re-implementation)
+ * across the household's transactions, in a deliberate order — a
+ * transaction can be at most one of: transfer leg, reversal leg, or refund
+ * leg, so each stage below only considers transactions the earlier stages
+ * left unmatched. Transfers run first (the most specific match: two
+ * different accounts, exact amount, short window); reversals next (same
+ * account, exact amount, opposite direction, very short window — Task 6A's
+ * gap, packages/ledger/src/reversalDetection.ts); refunds last (the
+ * loosest match: same account, merchant-matched, wider window, credit ≤
+ * original).
+ */
+async function reconcileTransferReversalsAndRefunds(householdId: string): Promise<void> {
   const transactions = await prisma.transaction.findMany({
-    where: { account: { connection: { householdId } }, isTransfer: false },
+    where: { account: { connection: { householdId } }, isTransfer: false, isReversal: false },
     include: { account: true, merchant: true },
   });
 
@@ -203,7 +241,35 @@ async function reconcileTransfersAndRefunds(householdId: string): Promise<void> 
     });
   }
 
-  const refundCandidates = transactions.filter((t) => t.merchant && !transferMatches.some((m) => m.debitTransactionId === t.id || m.creditTransactionId === t.id));
+  const notYetTransferMatched = transactions.filter(
+    (t) => !transferMatches.some((m) => m.debitTransactionId === t.id || m.creditTransactionId === t.id),
+  );
+
+  const reversalMatches = detectReversals(
+    notYetTransferMatched.map((t) => ({
+      id: t.id,
+      accountId: t.accountId,
+      amount: t.amount.toString(),
+      direction: t.direction,
+      transactionDate: formatCalendarDate(t.transactionDate),
+    })),
+  );
+  for (const match of reversalMatches) {
+    await prisma.transaction.update({
+      where: { id: match.originalTransactionId },
+      data: { isReversal: true, isExcludedFromBudget: true, counterpartTransactionId: match.reversalTransactionId },
+    });
+    await prisma.transaction.update({
+      where: { id: match.reversalTransactionId },
+      data: { isReversal: true, isExcludedFromBudget: true },
+    });
+  }
+
+  const refundCandidates = notYetTransferMatched.filter(
+    (t) =>
+      t.merchant &&
+      !reversalMatches.some((m) => m.originalTransactionId === t.id || m.reversalTransactionId === t.id),
+  );
   const refundMatches = detectRefunds(
     refundCandidates.map((t) => ({
       id: t.id,

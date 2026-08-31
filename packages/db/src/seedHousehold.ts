@@ -14,11 +14,17 @@
 import { randomUUID } from "node:crypto";
 import bcryptjs from "bcryptjs";
 import { MockProvider, MOCK_INSTITUTIONS } from "@frodocodo/providers";
-import { normalizeMerchant, detectTransferPairs, detectRefunds } from "@frodocodo/ledger";
+import {
+  normalizeMerchant,
+  detectTransferPairs,
+  detectReversals,
+  detectRefunds,
+  deriveDefaultAccountAlias,
+  toIngestibleTransactionFields,
+} from "@frodocodo/ledger";
 import { todayUTC } from "@frodocodo/shared";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./index.js";
-import { encryptForStorage } from "./payloadEncryption.js";
 
 const DEMO_ADMIN_EMAIL = "admin@frodocodo.household";
 const DEMO_MEMBER_EMAIL = "member@frodocodo.household";
@@ -213,6 +219,10 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
     tx: Awaited<ReturnType<typeof provider.syncTransactions>>["transactions"][number];
   }
   const rawTransactions: RawSyncedTransaction[] = [];
+  // Accumulated across institutions so aliases stay unique household-wide
+  // (Task 6B, packages/ledger/src/accountAlias.ts) -- never derived from
+  // any provider-supplied nickname string.
+  const aliasesSoFar: string[] = [];
 
   for (const inst of MOCK_INSTITUTIONS) {
     const institution = institutionByProviderId.get(inst.providerInstitutionId)!;
@@ -240,19 +250,26 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
     const accountByProviderId = new Map<string, { id: string; accountType: string }>(
       providerAccounts.map((pa) => [pa.providerAccountId, { id: randomUUID(), accountType: pa.accountType }]),
     );
-    await prisma.account.createMany({
-      data: providerAccounts.map((pa) => ({
+    // Never `pa.displayName` (the provider's own nickname string, which a
+    // real aggregator can populate with a masked-account-number fragment —
+    // see docs/banking-data-minimisation-audit.md §3/§5) — every account's
+    // household-facing label is a FrodoCodo-derived alias instead.
+    const accountRows = providerAccounts.map((pa) => {
+      const alias = deriveDefaultAccountAlias(inst.shortName, pa.accountType, aliasesSoFar);
+      aliasesSoFar.push(alias);
+      return {
         id: accountByProviderId.get(pa.providerAccountId)!.id,
         connectionId: connection.id,
         providerAccountId: pa.providerAccountId,
-        displayName: pa.displayName,
+        alias,
         accountType: pa.accountType,
         currency: pa.currency,
         currentBalance: pa.currentBalance.toNumber(),
         availableBalance: pa.availableBalance.toNumber(),
         lastSyncedAt: new Date(),
-      })),
+      };
     });
+    await prisma.account.createMany({ data: accountRows });
 
     const sync = await provider.syncTransactions(providerConnectionId, {});
     for (const tx of sync.transactions) {
@@ -291,10 +308,25 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
     data: Prisma.TransactionCreateManyInput;
   }
   const staged: StagedTransaction[] = rawTransactions.map(({ accountId, accountType, tx }) => {
-    const merchant = normalizeMerchant(tx.description);
-    const isIncome = /SALARY/i.test(tx.description);
-    const isTransferLabel = /^PAYMENT (TO|RECEIVED)/i.test(tx.description);
-    const categoryKey = isIncome || isTransferLabel ? null : categorizeByDescription(tx.description);
+    // The one sanctioned path from the provider's raw transaction shape
+    // into what gets persisted (Task 6B) — tx.raw is never read again past
+    // this point.
+    const ingestible = toIngestibleTransactionFields({
+      sourceAccountId: tx.accountProviderId,
+      sourceTransactionId: tx.providerTransactionId,
+      transactionDate: tx.transactionDate,
+      postingDate: tx.postingDate,
+      amount: tx.amount,
+      direction: tx.direction,
+      status: tx.status,
+      description: tx.description,
+      sourceType: "PROVIDER_SYNC",
+    });
+
+    const merchant = normalizeMerchant(ingestible.originalDescription);
+    const isIncome = /SALARY/i.test(ingestible.originalDescription);
+    const isTransferLabel = /^PAYMENT (TO|RECEIVED)/i.test(ingestible.originalDescription);
+    const categoryKey = isIncome || isTransferLabel ? null : categorizeByDescription(ingestible.originalDescription);
     const category = categoryKey ? categoryByKey.get(categoryKey)! : null;
     const id = randomUUID();
 
@@ -307,13 +339,14 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
       data: {
         id,
         accountId,
-        providerTransactionId: tx.providerTransactionId,
-        transactionDate: new Date(tx.transactionDate),
-        postingDate: tx.postingDate ? new Date(tx.postingDate) : null,
-        amount: tx.amount.toNumber(),
-        direction: tx.direction,
-        status: tx.status,
-        originalDescription: tx.description,
+        providerTransactionId: ingestible.providerTransactionId,
+        transactionDate: new Date(ingestible.transactionDate),
+        postingDate: ingestible.postingDate ? new Date(ingestible.postingDate) : null,
+        amount: ingestible.amount.toNumber(),
+        direction: ingestible.direction,
+        status: ingestible.status,
+        originalDescription: ingestible.originalDescription,
+        sourceType: ingestible.sourceType,
         normalizedMerchantId: merchantIdByMatchKey.get(merchant.matchKey) ?? null,
         merchantConfidence: merchant.confidence,
         categoryId: category?.id ?? null,
@@ -321,9 +354,6 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
         classificationSource: category ? "RULE" : undefined,
         isExcludedFromBudget: isIncome || isTransferLabel,
         isTransfer: isTransferLabel,
-        // Never stored as plaintext (security audit finding H3) — see
-        // packages/db/src/payloadEncryption.ts.
-        rawProviderPayload: (encryptForStorage(tx.raw) ?? null) as never,
       },
     };
   });
@@ -338,7 +368,7 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
     });
   }
 
-  log("Reconciling transfers and refunds via @frodocodo/ledger...");
+  log("Reconciling transfers, reversals, and refunds via @frodocodo/ledger...");
   const transferMatches = detectTransferPairs(
     staged
       .filter((t) => t.data.isTransfer)
@@ -352,8 +382,27 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
       })),
   );
 
+  // Task 6A's specific gap: a same-account, equal-and-opposite reversal
+  // (packages/ledger/src/reversalDetection.ts) — considered across every
+  // transaction not already matched as a transfer leg, ahead of refund
+  // matching, mirroring apps/worker/src/syncConnection.ts's reconciliation
+  // order.
+  const transferMatchedIds = new Set(transferMatches.flatMap((m) => [m.debitTransactionId, m.creditTransactionId]));
+  const reversalMatches = detectReversals(
+    staged
+      .filter((t) => !transferMatchedIds.has(t.id))
+      .map((t) => ({
+        id: t.id,
+        accountId: t.accountId,
+        amount: (t.data as { amount: number }).amount,
+        direction: (t.data as { direction: "DEBIT" | "CREDIT" }).direction,
+        transactionDate: (t.data as { transactionDate: Date }).transactionDate.toISOString().slice(0, 10),
+      })),
+  );
+  const reversalMatchedIds = new Set(reversalMatches.flatMap((m) => [m.originalTransactionId, m.reversalTransactionId]));
+
   const refundCandidates = staged
-    .filter((t) => t.merchantMatchKey)
+    .filter((t) => t.merchantMatchKey && !reversalMatchedIds.has(t.id))
     .map((t) => ({
       id: t.id,
       accountId: t.accountId,
@@ -377,6 +426,16 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
       prisma.transaction.update({
         where: { id: match.creditTransactionId },
         data: { transferGroupId: match.debitTransactionId },
+      }),
+    ]),
+    ...reversalMatches.flatMap((match) => [
+      prisma.transaction.update({
+        where: { id: match.originalTransactionId },
+        data: { isReversal: true, isExcludedFromBudget: true, counterpartTransactionId: match.reversalTransactionId },
+      }),
+      prisma.transaction.update({
+        where: { id: match.reversalTransactionId },
+        data: { isReversal: true, isExcludedFromBudget: true },
       }),
     ]),
     ...refundMatches.map((match) => {

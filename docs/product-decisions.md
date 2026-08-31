@@ -89,8 +89,11 @@ See `CLAUDE.md`'s "Known limitations" section and `docs/security-privacy.md`'s
 - Rate limiting and structured PII-safe logging aren't implemented (fine for
   single-household local use; needed before any multi-tenant or public
   deployment).
-- `Transaction.rawProviderPayload` should be encrypted at rest before a real
-  provider integration goes live with real accounts.
+- ~~`Transaction.rawProviderPayload` should be encrypted at rest before a
+  real provider integration goes live with real accounts.~~ Superseded by
+  Task 6B: the column was removed entirely rather than encrypted — data
+  FrodoCodo never retains cannot later leak, which is a stronger guarantee
+  than encryption-at-rest. See `docs/banking-data-minimisation-audit.md`.
 - 9 of 15 spec-listed insight detector types aren't implemented (see above).
 
 ## Non-negotiables preserved throughout

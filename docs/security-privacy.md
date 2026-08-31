@@ -50,14 +50,29 @@ required for the requested task" principle from §22/§34.
 ## Data at rest
 
 Prisma's `Decimal` columns store money precisely (no float drift).
-`Transaction.rawProviderPayload` (Json) preserves the original provider
-response for audit/debugging — in a production deployment with a real
-provider, this column is the highest-sensitivity data in the schema (it may
-contain more of the original payload than the normalized fields) and should
-be encrypted at the column level (e.g. via `pgcrypto` or an application-level
-envelope) before going live with real accounts. This repo does not implement
-that encryption yet, since it never stores real financial data — flagged
-here so it isn't missed before a real deployment.
+
+There is deliberately no raw-provider-payload column. An earlier design
+(security audit finding H3) preserved the provider's original sync
+response in `Transaction.rawProviderPayload`, encrypted at the application
+level. Task 6B's data-minimisation pass removed the column entirely
+instead: data FrodoCodo never retains cannot later leak, which is a
+stronger guarantee than encrypting it at rest ever was. Every ingestion
+path (`apps/worker/src/syncConnection.ts`, `packages/db/src/seedHousehold.ts`,
+and any future CSV/screenshot importer) must map a source's transaction
+through `packages/ledger/src/ingestion.ts`'s explicit field allow-list —
+the only fields that function reads ever reach permanent storage, so a
+source that starts returning extra data (a raw payload, an account number,
+a customer name) cannot leak into the database by accident. See
+`docs/banking-data-minimisation-audit.md` for the full reasoning, threat
+model, and what else this principle rules out (full account numbers,
+BSBs, customer names/addresses, card numbers).
+
+The same principle applies to a connected account's household-facing
+label: `Account.alias` is a FrodoCodo/household-chosen alias (e.g. "CBA",
+"Virgin", "Amex"), never the provider's own account nickname — a real
+aggregator response can embed a masked-account-number fragment in that
+nickname string, which is exactly the kind of banking-identity data this
+product must never persist or display.
 
 ## Audit trail
 

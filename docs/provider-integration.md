@@ -60,8 +60,18 @@ mapping Basiq's API to our normalized shape:
   consent status, map to our `ConsentStatus` enum (`PENDING` / `ACTIVE` /
   `EXPIRING` / `EXPIRED` / `REVOKED`).
 - `discoverAccounts` / `syncTransactions` → map Basiq's account/transaction
-  shape to `ProviderAccount`/`ProviderTransaction`, preserving the original
-  payload in `raw` for `Transaction.rawProviderPayload`.
+  shape to `ProviderAccount`/`ProviderTransaction`. `ProviderTransaction.raw`
+  may still carry Basiq's original response for the adapter's own use, but
+  nothing downstream persists it: every ingestion call site maps into
+  `packages/ledger/src/ingestion.ts`'s `NormalizedTransactionInput` first,
+  whose allow-listed fields are the only thing that ever reaches the
+  database (Task 6B — see `docs/banking-data-minimisation-audit.md`). Do
+  not add a new field or code path that writes `raw`/the full Basiq
+  response into any table.
+- Account discovery must derive the household-facing `Account.alias` via
+  `deriveDefaultAccountAlias` (`packages/ledger/src/accountAlias.ts`) from
+  the institution's short name — never from Basiq's own account nickname
+  string, which can embed a masked-account-number fragment.
 - `disconnectConnection` → revoke consent via Basiq's API, not just locally.
 
 None of `packages/ledger`, `packages/domain`, `apps/web`, or `apps/worker`

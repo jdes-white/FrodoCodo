@@ -69,7 +69,7 @@ export default async function SettingsPage() {
               {conn.accounts.map((account) => (
                 <div key={account.id} className="flex items-center justify-between text-sm">
                   <span>
-                    {account.displayName}
+                    {account.alias}
                     {account.currentBalance !== null && (
                       <span style={{ color: "var(--color-text-muted)" }}> · {formatAUD(fromPrismaDecimal(account.currentBalance))}</span>
                     )}

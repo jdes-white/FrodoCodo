@@ -8,7 +8,7 @@ interface CategoryOption {
 
 interface AccountOption {
   id: string;
-  displayName: string;
+  alias: string;
 }
 
 export function TransactionFiltersForm({
@@ -70,7 +70,7 @@ export function TransactionFiltersForm({
           <option value="">All</option>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.displayName}
+              {a.alias}
             </option>
           ))}
         </select>

@@ -43,7 +43,7 @@ export default async function TransactionDetailPage({ params }: { params: Promis
           <dt style={{ color: "var(--color-text-muted)" }}>Original description</dt>
           <dd className="text-right">{transaction.originalDescription}</dd>
           <dt style={{ color: "var(--color-text-muted)" }}>Account</dt>
-          <dd className="text-right">{transaction.account.displayName}</dd>
+          <dd className="text-right">{transaction.account.alias}</dd>
           <dt style={{ color: "var(--color-text-muted)" }}>Institution</dt>
           <dd className="text-right">{transaction.account.connection.institution.shortName}</dd>
           <dt style={{ color: "var(--color-text-muted)" }}>Date</dt>
