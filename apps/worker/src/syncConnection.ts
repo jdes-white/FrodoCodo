@@ -41,16 +41,18 @@ export async function syncConnection(provider: FinancialDataProvider, connection
 
     const accountByProviderId = new Map(connection.accounts.map((a) => [a.providerAccountId, a]));
 
+    // providerAccount.currentBalance/availableBalance are read off the sync
+    // response above and intentionally never touched again here (Task 6C):
+    // no currently-required feature reads an account balance -- "how much
+    // is left" is budget-remaining, not bank balance -- so only
+    // lastSyncedAt (needed for the stale-sync warning in budgetSnapshot.ts)
+    // is updated.
     for (const providerAccount of result.accounts) {
       const account = accountByProviderId.get(providerAccount.providerAccountId);
       if (!account) continue;
       await prisma.account.update({
         where: { id: account.id },
-        data: {
-          currentBalance: providerAccount.currentBalance.toNumber(),
-          availableBalance: providerAccount.availableBalance.toNumber(),
-          lastSyncedAt: new Date(),
-        },
+        data: { lastSyncedAt: new Date() },
       });
     }
 
@@ -92,6 +94,7 @@ export async function syncConnection(provider: FinancialDataProvider, connection
         status: tx.status,
         description: tx.description,
         sourceType: "PROVIDER_SYNC",
+        reversalOfSourceTransactionId: tx.reversalOfProviderTransactionId,
       });
 
       const decision = resolveDedupe(
@@ -150,6 +153,7 @@ export async function syncConnection(provider: FinancialDataProvider, connection
           status: ingestible.status,
           originalDescription: ingestible.originalDescription,
           sourceType: ingestible.sourceType,
+          reversalOfProviderTransactionId: ingestible.reversalOfProviderTransactionId,
           normalizedMerchantId: merchantRow.id,
           merchantConfidence: merchant.confidence,
           categoryId: classification.status === "CLASSIFIED" ? classification.categoryId : null,
@@ -249,9 +253,12 @@ async function reconcileTransferReversalsAndRefunds(householdId: string): Promis
     notYetTransferMatched.map((t) => ({
       id: t.id,
       accountId: t.accountId,
+      providerTransactionId: t.providerTransactionId,
       amount: t.amount.toString(),
       direction: t.direction,
       transactionDate: formatCalendarDate(t.transactionDate),
+      reversalOfProviderTransactionId: t.reversalOfProviderTransactionId,
+      description: t.originalDescription,
     })),
   );
   for (const match of reversalMatches) {

@@ -314,18 +314,33 @@ model Account {
   // renamed (not recreated) so every existing account's current value
   // carries over untouched.
   alias               String
-  // Retained deliberately (Task 6B data-minimisation review): drives
-  // transfer-pair/repayment detection (packages/ledger/src/transferDetection.ts)
-  // and account grouping in the UI — a genuine required feature, not
-  // provider metadata carried along for its own sake.
+  // Retained deliberately (Task 6B/6C data-minimisation review): a coarse,
+  // FrodoCodo-internal classification (TRANSACTION/CREDIT_CARD/SAVINGS/
+  // OTHER — never a provider product name like "Complete Access" or
+  // "Velocity High Flyer", which lives only in the alias/institution
+  // fields). The one genuine, currently-exercised dependency is
+  // transfer-pair/repayment-kind detection
+  // (packages/ledger/src/transferDetection.ts's debit/credit
+  // CREDIT_CARD_REPAYMENT-vs-INTER_ACCOUNT_TRANSFER distinction) — nothing
+  // reads this field for display or grouping today. This is already the
+  // minimum enumerated classification that distinction needs; there is no
+  // further reduction available without losing that capability.
   accountType         AccountType
   currency            String      @default("AUD")
-  // Retained deliberately: "how much do we have left" is the product's
-  // first question (CLAUDE.md) and cannot be answered without a balance.
-  // A monetary figure carries none of the banking-identity sensitivity
-  // (account number, BSB, holder name) this audit targets.
-  currentBalance      Decimal?    @db.Decimal(14, 2)
-  availableBalance    Decimal?    @db.Decimal(14, 2)
+  // Task 6C data-minimisation review: `currentBalance`/`availableBalance`
+  // were previously kept here on the assumption that "how much do we have
+  // left" needed a bank balance. On review, that's wrong — the product's
+  // "how much is left" answer is *budget remaining*
+  // (`apps/web/lib/budgetSnapshot.ts`'s allocation-minus-spend
+  // calculation), which never reads an account balance; nothing else in
+  // this codebase reads `currentBalance`/`availableBalance` either. No
+  // currently-required feature depends on them, so per the audit's own
+  // principle ("do not retain a banking field merely because the provider
+  // supplies it") they were removed rather than kept "just in case" — see
+  // docs/banking-data-minimisation-audit.md and the Task 6C report for the
+  // full reasoning. A provider's `ProviderAccount.currentBalance`/
+  // `availableBalance` (packages/providers/src/types.ts) are read from the
+  // sync response and then deliberately discarded, never written here.
   isIncludedInBudget  Boolean     @default(true)
   lastSyncedAt        DateTime?
   createdAt           DateTime    @default(now())
@@ -566,6 +581,16 @@ model Transaction {
   accountId              String
   syncRunId              String?
   providerTransactionId  String?
+  // A provider's own explicit declaration that this transaction
+  // reverses/links to another one (its providerTransactionId), when a
+  // source actually supplies that (Task 6C, packages/ledger/src/reversalDetection.ts's
+  // tier-1 evidence — trust an explicit provider-supplied linkage before
+  // ever falling back to amount/date/keyword inference). No current
+  // source (MockProvider, the demo seed) populates this; it stays null
+  // for every row until a real provider that supplies such a link is
+  // wired up. Structurally identical in sensitivity to
+  // providerTransactionId itself — a single opaque ID, not a payload.
+  reversalOfProviderTransactionId String?
   // Which pipeline produced this row (Task 6B, packages/ledger/src/ingestion.ts)
   // — lets the ledger distinguish a live provider sync from a future CSV or
   // screenshot import without the categorisation/budgeting engine needing

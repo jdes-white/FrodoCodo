@@ -32,6 +32,17 @@ export interface ProviderAccount {
   displayName: string;
   accountType: AccountType;
   currency: string;
+  /**
+   * A real provider's account response naturally includes these — kept
+   * here so an adapter's shape stays realistic — but Task 6C's
+   * data-minimisation review found no currently-required FrodoCodo
+   * feature reads a bank balance ("how much is left" is budget-remaining,
+   * not account balance) and removed them from the persisted `Account`
+   * model and the account ingestion allow-list
+   * (`packages/ledger/src/ingestion.ts`). Every ingestion call site reads
+   * these off the sync response and then discards them; do not add a code
+   * path that persists them.
+   */
   currentBalance: Money;
   availableBalance: Money;
 }
@@ -49,6 +60,14 @@ export interface ProviderTransaction {
   /** Provider-enriched merchant/category, when available (classification Layer 3, §11). */
   enrichedMerchant?: string;
   enrichedCategory?: string;
+  /**
+   * A provider's own explicit declaration that this transaction reverses/
+   * links to another one, by that other transaction's providerTransactionId
+   * (Task 6C reversal-detection hardening — tier-1 evidence, preferred
+   * over any amount/date/keyword inference when a source actually
+   * supplies it). No adapter in this codebase populates this today.
+   */
+  reversalOfProviderTransactionId?: string | null;
   /** Preserved verbatim for audit/debugging (§9) — never shown to end users directly. */
   raw?: unknown;
 }

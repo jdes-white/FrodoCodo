@@ -1,4 +1,4 @@
-import type { TransactionDirection, TransactionStatus } from "@frodocodo/shared";
+import type { AccountType, TransactionDirection, TransactionStatus } from "@frodocodo/shared";
 import { toMoney, type Money, type MoneyInput } from "@frodocodo/shared";
 
 /**
@@ -49,6 +49,14 @@ export interface NormalizedTransactionInput {
   /** The source's own transaction description/merchant text, before FrodoCodo's own merchant normalization runs. */
   description: string;
   sourceType: IngestionSourceType;
+  /**
+   * A source's own explicit declaration that this transaction reverses/
+   * links to another one, by that other transaction's stable source ID
+   * (Task 6C reversal-detection hardening, tier-1 evidence — see
+   * reversalDetection.ts). Omit/null when the source doesn't supply one;
+   * never guessed or derived.
+   */
+  reversalOfSourceTransactionId?: string | null;
 }
 
 /**
@@ -65,6 +73,7 @@ export interface IngestibleTransactionFields {
   status: TransactionStatus;
   originalDescription: string;
   sourceType: IngestionSourceType;
+  reversalOfProviderTransactionId: string | null;
 }
 
 export function toIngestibleTransactionFields(input: NormalizedTransactionInput): IngestibleTransactionFields {
@@ -77,5 +86,39 @@ export function toIngestibleTransactionFields(input: NormalizedTransactionInput)
     status: input.status,
     originalDescription: input.description,
     sourceType: input.sourceType,
+    reversalOfProviderTransactionId: input.reversalOfSourceTransactionId ?? null,
+  };
+}
+
+/**
+ * Task 6C: the account-side counterpart of `toIngestibleTransactionFields`
+ * — the only allow-listed path from a source's account shape into what
+ * FrodoCodo persists. Deliberately excludes balances
+ * (`currentBalance`/`availableBalance` — no currently-required feature
+ * reads a bank balance, see `docs/banking-data-minimisation-audit.md`),
+ * the provider's own account nickname/display name (a real aggregator
+ * response can embed a masked-account-number fragment there — the
+ * household-facing label is always a separately-derived alias, see
+ * `accountAlias.ts`, never provider data), and any account
+ * number/BSB/holder-identity field a source might return.
+ */
+export interface NormalizedAccountInput {
+  /** Opaque provider/source account identifier — never a bank account number. */
+  sourceAccountId: string;
+  accountType: AccountType;
+  currency: string;
+}
+
+export interface IngestibleAccountFields {
+  providerAccountId: string;
+  accountType: AccountType;
+  currency: string;
+}
+
+export function toIngestibleAccountFields(input: NormalizedAccountInput): IngestibleAccountFields {
+  return {
+    providerAccountId: input.sourceAccountId,
+    accountType: input.accountType,
+    currency: input.currency,
   };
 }

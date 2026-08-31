@@ -2,21 +2,24 @@ import { test, expect } from "@playwright/test";
 import { prisma } from "@frodocodo/db";
 
 /**
- * Task 6B privacy enforcement: proves the real, deployed seed/ingestion
- * path (not just the ledger's allow-list function in isolation — that's
+ * Task 6B/6C privacy enforcement: proves the real, deployed seed/ingestion
+ * path (not just the ledger's allow-list functions in isolation — that's
  * covered by packages/ledger/src/__tests__/ingestion.test.ts) never
- * persists a raw provider payload or a banking-identity-looking account
- * label.
+ * persists a raw provider payload, a banking-identity-looking account
+ * label, or an account balance.
  *
  * This file previously proved security audit finding H3 (the raw payload
  * was encrypted, never plaintext). Task 6A/6B's stronger decision replaced
  * that column entirely: `Transaction.rawProviderPayload` no longer exists
  * in the schema, so there is nothing left to encrypt — data FrodoCodo
- * never retains cannot later leak. See docs/banking-data-minimisation-audit.md.
+ * never retains cannot later leak. Task 6C additionally removed
+ * `Account.currentBalance`/`availableBalance`: no currently-required
+ * feature reads a bank balance ("how much is left" is budget-remaining,
+ * not account balance). See docs/banking-data-minimisation-audit.md.
  */
 
-test.describe("Privacy-first ingestion (Task 6B)", () => {
-  test("no rawProviderPayload column exists on Transaction", async () => {
+test.describe("Privacy-first ingestion (Task 6B/6C)", () => {
+  test("no rawProviderPayload/institutionTransactionRef column exists on Transaction", async () => {
     const columns = await prisma.$queryRaw<Array<{ column_name: string }>>`
       SELECT column_name FROM information_schema.columns
       WHERE table_name = 'Transaction' AND table_schema = 'public'
@@ -24,6 +27,16 @@ test.describe("Privacy-first ingestion (Task 6B)", () => {
     const columnNames = columns.map((c) => c.column_name);
     expect(columnNames).not.toContain("rawProviderPayload");
     expect(columnNames).not.toContain("institutionTransactionRef");
+  });
+
+  test("no currentBalance/availableBalance column exists on Account", async () => {
+    const columns = await prisma.$queryRaw<Array<{ column_name: string }>>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'Account' AND table_schema = 'public'
+    `;
+    const columnNames = columns.map((c) => c.column_name);
+    expect(columnNames).not.toContain("currentBalance");
+    expect(columnNames).not.toContain("availableBalance");
   });
 
   test("seeded accounts expose only a short household alias, never a provider account nickname or number-looking string", async () => {

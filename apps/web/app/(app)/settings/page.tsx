@@ -1,7 +1,5 @@
-import { formatAUD } from "@frodocodo/shared";
 import { requireSession } from "@/lib/session";
 import { prisma } from "@frodocodo/db";
-import { fromPrismaDecimal } from "@/lib/decimal";
 import { getHousehold } from "@/lib/household";
 import { withRouteTiming } from "@/lib/perf";
 import { setAccountIncluded, disconnectInstitution } from "./actions";
@@ -68,12 +66,7 @@ export default async function SettingsPage() {
             <div className="mt-2 flex flex-col gap-1.5">
               {conn.accounts.map((account) => (
                 <div key={account.id} className="flex items-center justify-between text-sm">
-                  <span>
-                    {account.alias}
-                    {account.currentBalance !== null && (
-                      <span style={{ color: "var(--color-text-muted)" }}> · {formatAUD(fromPrismaDecimal(account.currentBalance))}</span>
-                    )}
-                  </span>
+                  <span>{account.alias}</span>
                   {isAdmin ? (
                     <form action={setAccountIncluded} className="flex items-center gap-1.5">
                       <input type="hidden" name="accountId" value={account.id} />

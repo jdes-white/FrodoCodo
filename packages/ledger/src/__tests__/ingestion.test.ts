@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { toMoney } from "@frodocodo/shared";
-import { toIngestibleTransactionFields, type NormalizedTransactionInput } from "../ingestion.js";
+import {
+  toIngestibleTransactionFields,
+  toIngestibleAccountFields,
+  type NormalizedTransactionInput,
+  type NormalizedAccountInput,
+} from "../ingestion.js";
 
 describe("toIngestibleTransactionFields (Task 6B privacy allow-list)", () => {
   it("maps every allowed field through unchanged", () => {
@@ -81,8 +86,58 @@ describe("toIngestibleTransactionFields (Task 6B privacy allow-list)", () => {
     const keys = Object.keys(result);
 
     expect(keys.sort()).toEqual(
-      ["providerTransactionId", "transactionDate", "postingDate", "amount", "direction", "status", "originalDescription", "sourceType"].sort(),
+      [
+        "providerTransactionId",
+        "transactionDate",
+        "postingDate",
+        "amount",
+        "direction",
+        "status",
+        "originalDescription",
+        "sourceType",
+        "reversalOfProviderTransactionId",
+      ].sort(),
     );
     expect(JSON.stringify(result)).not.toMatch(/accountNumber|maskedAccountNumber|bsb|customerName|customerAddress|cardNumber|rawPayload|4111111111111111|062-000|12345678/i);
+  });
+});
+
+describe("toIngestibleAccountFields (Task 6C privacy allow-list)", () => {
+  it("maps every allowed field through unchanged", () => {
+    const input: NormalizedAccountInput = {
+      sourceAccountId: "provider-account-xyz",
+      accountType: "TRANSACTION",
+      currency: "AUD",
+    };
+    const result = toIngestibleAccountFields(input);
+    expect(result).toEqual({ providerAccountId: "provider-account-xyz", accountType: "TRANSACTION", currency: "AUD" });
+  });
+
+  it("never lets a provider account nickname, balance, account number, BSB, or holder identity cross the allow-list", () => {
+    // Simulates a real provider/CDR account response, which returns far
+    // more than FrodoCodo persists: a display nickname that can embed a
+    // masked-account-number fragment, live balances, and banking-identity
+    // fields FrodoCodo never requests in the first place
+    // (docs/banking-data-minimisation-audit.md §3).
+    const dangerousInput = {
+      sourceAccountId: "provider-account-xyz",
+      accountType: "TRANSACTION",
+      currency: "AUD",
+      // Everything below must never appear in the output.
+      displayName: "Complete Access ...1234",
+      nickname: "Complete Access ...1234",
+      currentBalance: 4821.33,
+      availableBalance: 4821.33,
+      accountNumber: "12345678",
+      maskedAccountNumber: "****5678",
+      bsb: "062-000",
+      holderName: "Alex Household",
+    } as unknown as NormalizedAccountInput;
+
+    const result = toIngestibleAccountFields(dangerousInput);
+    const keys = Object.keys(result);
+
+    expect(keys.sort()).toEqual(["providerAccountId", "accountType", "currency"].sort());
+    expect(JSON.stringify(result)).not.toMatch(/displayName|nickname|Complete Access|[Bb]alance|4821|accountNumber|maskedAccountNumber|bsb|holderName|062-000|12345678/);
   });
 });

@@ -21,6 +21,7 @@ import {
   detectRefunds,
   deriveDefaultAccountAlias,
   toIngestibleTransactionFields,
+  toIngestibleAccountFields,
 } from "@frodocodo/ledger";
 import { todayUTC } from "@frodocodo/shared";
 import type { Prisma } from "@prisma/client";
@@ -253,19 +254,26 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
     // Never `pa.displayName` (the provider's own nickname string, which a
     // real aggregator can populate with a masked-account-number fragment —
     // see docs/banking-data-minimisation-audit.md §3/§5) — every account's
-    // household-facing label is a FrodoCodo-derived alias instead.
+    // household-facing label is a FrodoCodo-derived alias instead. Provider
+    // fields cross into the persisted row only through
+    // toIngestibleAccountFields's allow-list (Task 6C) -- notably, never
+    // pa.currentBalance/availableBalance, which the mock (and any real)
+    // provider does return, but nothing downstream reads.
     const accountRows = providerAccounts.map((pa) => {
       const alias = deriveDefaultAccountAlias(inst.shortName, pa.accountType, aliasesSoFar);
       aliasesSoFar.push(alias);
+      const ingestibleAccount = toIngestibleAccountFields({
+        sourceAccountId: pa.providerAccountId,
+        accountType: pa.accountType,
+        currency: pa.currency,
+      });
       return {
         id: accountByProviderId.get(pa.providerAccountId)!.id,
         connectionId: connection.id,
-        providerAccountId: pa.providerAccountId,
+        providerAccountId: ingestibleAccount.providerAccountId,
         alias,
-        accountType: pa.accountType,
-        currency: pa.currency,
-        currentBalance: pa.currentBalance.toNumber(),
-        availableBalance: pa.availableBalance.toNumber(),
+        accountType: ingestibleAccount.accountType,
+        currency: ingestibleAccount.currency,
         lastSyncedAt: new Date(),
       };
     });
@@ -321,6 +329,7 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
       status: tx.status,
       description: tx.description,
       sourceType: "PROVIDER_SYNC",
+      reversalOfSourceTransactionId: tx.reversalOfProviderTransactionId,
     });
 
     const merchant = normalizeMerchant(ingestible.originalDescription);
@@ -347,6 +356,7 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
         status: ingestible.status,
         originalDescription: ingestible.originalDescription,
         sourceType: ingestible.sourceType,
+        reversalOfProviderTransactionId: ingestible.reversalOfProviderTransactionId,
         normalizedMerchantId: merchantIdByMatchKey.get(merchant.matchKey) ?? null,
         merchantConfidence: merchant.confidence,
         categoryId: category?.id ?? null,
@@ -394,9 +404,12 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
       .map((t) => ({
         id: t.id,
         accountId: t.accountId,
+        providerTransactionId: (t.data as { providerTransactionId: string | null }).providerTransactionId,
         amount: (t.data as { amount: number }).amount,
         direction: (t.data as { direction: "DEBIT" | "CREDIT" }).direction,
         transactionDate: (t.data as { transactionDate: Date }).transactionDate.toISOString().slice(0, 10),
+        reversalOfProviderTransactionId: (t.data as { reversalOfProviderTransactionId: string | null }).reversalOfProviderTransactionId,
+        description: (t.data as { originalDescription: string }).originalDescription,
       })),
   );
   const reversalMatchedIds = new Set(reversalMatches.flatMap((m) => [m.originalTransactionId, m.reversalTransactionId]));
