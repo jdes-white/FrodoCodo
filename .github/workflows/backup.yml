@@ -67,8 +67,22 @@ jobs:
           --health-retries 10
 
     steps:
+      # Pinned explicitly: GitHub always evaluates a `schedule` trigger's
+      # workflow file *and* its default `actions/checkout` ref against the
+      # repo's default branch, regardless of which branch this workflow
+      # file's own real content lives on. This repo's default branch
+      # (main) intentionally carries no application code at all — Render
+      # deploys from claude/household-financial-os-90nezc, per
+      # docs/deployment.md — so leaving this unset would make every
+      # scheduled (non-manual) run check out a branch with none of the
+      # backup scripts this workflow calls. Pinning it here means the
+      # *file registered on main* only ever needs to declare this pin
+      # correctly once; every actual run, scheduled or manual, always
+      # executes the real, current, maintained branch's content.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: claude/household-financial-os-90nezc
 
       - name: Install Postgres 17 client tools
         # ubuntu-latest's default "postgresql-client" package only ever
