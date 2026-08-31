@@ -1,0 +1,117 @@
+name: Database backup
+
+# Independent, encrypted backups of the production Neon database (security
+# audit finding C3). Neon's own point-in-time recovery on the Free plan is
+# capped at 6 hours — this workflow is the longer-retention half of the
+# recovery story, running entirely on GitHub Actions (free for this
+# public repo's Actions minutes) so it needs no Render or Neon plan
+# upgrade. See docs/backup-recovery.md for the full design, retention
+# policy, and restore procedure.
+#
+# Every run restores the backup it just took into a disposable Postgres
+# service container (never production, never any persistent database) and
+# verifies the restore structurally and by row count before publishing
+# anything — a backup that fails that check is never uploaded, and the
+# job fails loudly (a failed scheduled workflow run shows up in the
+# repository's Actions tab, and GitHub emails the repo's watchers by
+# default) instead of silently "succeeding" with a bad backup.
+#
+# Backups are stored as Releases in a separate PRIVATE companion repo
+# (github.com/jdes-white/frodocodo-backups), never in this repo — this
+# repo is public, and a backup of household financial data must not be
+# publicly accessible.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily
+  workflow_dispatch: {} # allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: read
+
+env:
+  BACKUP_REPO: jdes-white/frodocodo-backups
+  # Simple rolling retention: keep the most recent 30 daily backups (~1
+  # month) and delete anything older, every time a new backup succeeds.
+  # Deliberately not deleted before the new backup is confirmed good, so a
+  # bad run never leaves the household with fewer good backups than before.
+  BACKUP_RETENTION_COUNT: 30
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Disposable Postgres used ONLY to prove the backup just taken can
+    # actually be restored — this container is destroyed when the job
+    # ends and is never reachable from outside this job.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: verify
+          POSTGRES_PASSWORD: verify
+          POSTGRES_DB: verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U verify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Postgres client tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends postgresql-client jq
+
+      - name: Create backup
+        env:
+          BACKUP_SOURCE_DATABASE_URL: ${{ secrets.BACKUP_SOURCE_DATABASE_URL }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+          BACKUP_OUTPUT_DIR: ./backup-output
+        run: bash packages/db/scripts/backup/create-backup.sh
+
+      - name: Restore into disposable verification database
+        env:
+          RESTORE_TARGET_DATABASE_URL: postgresql://verify:verify@localhost:5432/verify
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: bash packages/db/scripts/backup/restore-backup.sh ./backup-output/db-backup-*.dump.enc
+
+      - name: Verify restored database matches manifest
+        env:
+          RESTORE_TARGET_DATABASE_URL: postgresql://verify:verify@localhost:5432/verify
+        run: bash packages/db/scripts/backup/verify-database.sh ./backup-output/db-backup-*.manifest.json
+
+      - name: Publish backup to the private backups repo
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          dump_file="$(ls ./backup-output/db-backup-*.dump.enc)"
+          manifest_file="$(ls ./backup-output/db-backup-*.manifest.json)"
+          tag="$(basename "$dump_file" .dump.enc)"
+          gh release create "$tag" \
+            --repo "$BACKUP_REPO" \
+            --title "$tag" \
+            --notes "Automated FrodoCodo database backup. See docs/backup-recovery.md in the main repo for the restore procedure." \
+            "$dump_file" "$manifest_file"
+
+      - name: Prune old backups beyond retention
+        env:
+          GH_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          all_tags="$(gh release list --repo "$BACKUP_REPO" --limit 1000 --json tagName,createdAt | jq -r 'sort_by(.createdAt) | reverse | .[].tagName')"
+          to_delete="$(echo "$all_tags" | tail -n +"$((BACKUP_RETENTION_COUNT + 1))")"
+          if [ -z "$to_delete" ]; then
+            echo "Nothing to prune (at or under retention limit of $BACKUP_RETENTION_COUNT)."
+            exit 0
+          fi
+          while IFS= read -r old_tag; do
+            [ -z "$old_tag" ] && continue
+            echo "Deleting old backup: $old_tag"
+            gh release delete "$old_tag" --repo "$BACKUP_REPO" --yes --cleanup-tag
+          done <<< "$to_delete"

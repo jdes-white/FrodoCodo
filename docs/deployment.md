@@ -103,6 +103,15 @@ still be set before relying on this service to pick up new migrations.
 Both connection strings come from Neon's dashboard (or `neon.tech`'s
 connection-string picker, which offers pooled/direct variants directly).
 
+## Backups
+
+Neon's Free-plan point-in-time recovery is capped at 6 hours. An
+independent, encrypted, automatically-verified daily backup (30-day
+rolling retention) runs on GitHub Actions and publishes to a separate
+private companion repository — see `docs/backup-recovery.md` for the full
+design, required secrets, and exact restore procedure. No Render or Neon
+plan change is required.
+
 ## Database runtime: Prisma
 
 Standard Prisma Client, native query-engine binary — deliberately the
@@ -408,7 +417,9 @@ not a reason to revisit the deployment architecture:
 
 - Real Basiq/Open Banking integration — see `docs/provider-integration.md`.
 - Real household financial data — reconsider Neon's free-tier
-  encryption-at-rest/backup posture first, see `docs/security-privacy.md`.
+  encryption-at-rest posture first, see `docs/security-privacy.md`.
+  Independent backup/recovery is already covered — see "Backups" above
+  and `docs/backup-recovery.md`.
 - A second household user, and later additional households.
 - Runtime LLM integration (`AI_PROVIDER=anthropic`).
 - A native React Native/Expo mobile client — talks to the same API routes.
