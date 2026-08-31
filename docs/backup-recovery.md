@@ -188,10 +188,15 @@ above) is what you want:
 
 ## Restore test performed (proof this works)
 
-A full backup → restore → verify cycle was run against this repo's local
-development database as a stand-in for production (this sandbox has no
-credentials for the real Neon project — see "What wasn't verified against
-real production" below):
+Two layers of proof exist: an initial local dry run of the mechanism, and
+a full production run of the actual GitHub Actions workflow once the
+required secrets and companion repository existed.
+
+### Local dry run (mechanism proof, pre-secrets)
+
+Before any production secrets existed, a full backup → restore → verify
+cycle was run against this repo's local development database as a
+stand-in for production:
 
 1. `create-backup.sh` against the local seeded demo database — produced a
    ~120KB encrypted backup covering all 28 tables (162 transactions, 127
@@ -215,16 +220,54 @@ real production" below):
      non-zero.
 6. The temporary test database was dropped afterward.
 
-### What wasn't verified against real production
+### Real production run (the actual workflow, against real Neon)
 
-This sandbox has no credentials for the actual Neon production project —
-only the mechanism itself (dump → verify → encrypt → decrypt → restore →
-verify) was proven, against an equivalent local database with the same
-schema. Once the human setup steps above are complete, the workflow's own
-built-in restore-verification step (see "Architecture," step 5) will
-prove the real thing on every single scheduled run going forward — that
-is a stronger, continuous guarantee than a one-time manual test against
-production could have been anyway.
+Once `BACKUP_SOURCE_DATABASE_URL`, `BACKUP_ENCRYPTION_KEY`, and
+`BACKUP_REPO_TOKEN` were configured as repository secrets and the private
+`jdes-white/frodocodo-backups` companion repository existed, the real
+`.github/workflows/backup.yml` was triggered by hand (`workflow_dispatch`)
+against the real production Neon database and run to completion multiple
+times while fixing issues surfaced along the way (client/server major
+version mismatch, `PATH` precedence for the installed Postgres 17 client
+tools, a first-run-only empty-target-repo case, and a `schedule`-trigger
+branch-pinning issue — see the commit history and the comments in
+`backup.yml` itself for each). The final, fully-fixed workflow definition
+has now completed successfully end-to-end against real production Neon,
+confirming:
+
+- **Connect & dump**: `pg_dump` (client 17, matching Neon's server version
+  17.11) connected read-only to production via `BACKUP_SOURCE_DATABASE_URL`
+  and produced a valid custom-format dump, confirmed by `pg_restore
+  --list` reading back its table of contents.
+- **Manifest**: a non-sensitive manifest (table names, row counts,
+  timestamp, latest applied Prisma migration) was generated and matched
+  the dump's actual contents.
+- **Encrypt**: the dump + manifest were bundled and AES-256-CBC encrypted.
+- **Restore into a disposable, isolated environment**: the exact encrypted
+  artifact just produced was decrypted and restored into a fresh
+  `postgres:17-alpine` service container that exists only for that one
+  workflow run and is destroyed immediately after — never production,
+  never anything persistent.
+- **Structural + row-count verification**: `verify-database.sh` confirmed
+  **all 28 production tables** were present in the restored database with
+  **exactly matching row counts** for every one of them — zero
+  discrepancies.
+- **Publish**: the verified encrypted backup and its manifest were
+  published as a GitHub Release in the private `frodocodo-backups`
+  companion repository, confirmed to exist there and confirmed the
+  repository's visibility is `private`.
+- **Retention/pruning**: the prune step ran and correctly reported nothing
+  to delete while under the 30-backup retention limit — confirmed
+  operational, not just present in code.
+- **No secret exposure**: at no point did any workflow log, job output, or
+  this session's own output print, echo, or retrieve the value of
+  `BACKUP_SOURCE_DATABASE_URL`, `BACKUP_ENCRYPTION_KEY`, or
+  `BACKUP_REPO_TOKEN` — GitHub Actions redacts configured secrets from all
+  log output automatically, confirmed by inspecting the actual job logs.
+
+The production database was never written to, restored into, or modified
+at any point during this process — only read from, via a single `pg_dump`
+per run.
 
 ## Threat model / what this does and doesn't cover
 
