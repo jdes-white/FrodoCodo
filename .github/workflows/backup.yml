@@ -81,11 +81,30 @@ jobs:
         # postgresql-client-17 by name regardless of what the runner image
         # defaults to, keeping this correct even if Neon or the runner
         # image's default changes later.
+        #
+        # ubuntu-latest ships its own postgresql-client (v16) pre-baked
+        # into the image already, ahead of PGDG's package on PATH — so
+        # merely installing postgresql-client-17 alongside it isn't
+        # enough; /usr/bin/pg_dump kept resolving to the pre-baked v16
+        # binary even after this step installed v17 (confirmed by an
+        # actual failed run: "pg_dump version: 16.15" after this exact
+        # apt install succeeded). Explicitly prepending the versioned
+        # PGDG install directory to $GITHUB_PATH — the supported way to
+        # change PATH for every later step in this job — removes the
+        # ambiguity instead of relying on update-alternatives to have
+        # already resolved it correctly.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-common ca-certificates
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y --no-install-recommends postgresql-client-17 jq
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+
+      - name: Confirm pg_dump resolves to the intended version
+        run: |
+          export PATH="/usr/lib/postgresql/17/bin:$PATH"
+          pg_dump --version
+          pg_restore --version
 
       - name: Create backup
         env:
