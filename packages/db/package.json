@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo skip",
     "build": "prisma generate",
-    "test": "echo skip"
+    "test": "vitest run"
   },
   "dependencies": {
     "@frodocodo/ledger": "workspace:*",
@@ -32,6 +32,7 @@
     "@types/node": "^22.10.5",
     "prisma": "6.19.3",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
   }
 }

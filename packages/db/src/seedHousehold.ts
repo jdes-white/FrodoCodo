@@ -18,6 +18,7 @@ import { normalizeMerchant, detectTransferPairs, detectRefunds } from "@frodocod
 import { todayUTC } from "@frodocodo/shared";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./index.js";
+import { encryptForStorage } from "./payloadEncryption.js";
 
 const DEMO_ADMIN_EMAIL = "admin@frodocodo.household";
 const DEMO_MEMBER_EMAIL = "member@frodocodo.household";
@@ -320,7 +321,9 @@ export async function seedDemoHousehold(log: (msg: string) => void = () => {}): 
         classificationSource: category ? "RULE" : undefined,
         isExcludedFromBudget: isIncome || isTransferLabel,
         isTransfer: isTransferLabel,
-        rawProviderPayload: tx.raw as never,
+        // Never stored as plaintext (security audit finding H3) — see
+        // packages/db/src/payloadEncryption.ts.
+        rawProviderPayload: (encryptForStorage(tx.raw) ?? null) as never,
       },
     };
   });

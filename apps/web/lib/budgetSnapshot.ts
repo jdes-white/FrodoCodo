@@ -159,8 +159,16 @@ export async function getBudgetSnapshot(householdId: string, asOf: string = toda
     .map(([categoryId]) => categoryId);
 
   if (uncoveredCategoryIdsWithSpend.length > 0) {
+    // householdId is scoped here as defense in depth (security audit
+    // finding H1): every id in uncoveredCategoryIdsWithSpend already comes
+    // from netSpendByCategory's own householdId-scoped query above, so
+    // this should never actually match a foreign category — but without
+    // this filter, a foreign categoryId that reached this household's own
+    // transactions via a bug elsewhere (e.g. a categoryId ownership gap in
+    // a mutation) would have its real name/bucket/colour surfaced directly
+    // on this household's Home/Insights/Plan pages.
     const uncoveredCategories = await prisma.category.findMany({
-      where: { id: { in: uncoveredCategoryIdsWithSpend } },
+      where: { id: { in: uncoveredCategoryIdsWithSpend }, householdId },
       include: { bucket: true },
     });
     for (const category of uncoveredCategories) {

@@ -49,6 +49,22 @@ export async function reclassifyTransaction(formData: FormData): Promise<void> {
     where: { id: transactionId, account: { connection: { householdId: session.householdId } } },
   });
 
+  // categoryId is a client-controlled form field (the <select> option value)
+  // — verifying the transaction belongs to this household says nothing
+  // about whether the category being written onto it does too. Without
+  // this, a household could point its own transaction at another
+  // household's categoryId and have that household's real category/bucket
+  // name and colour surface on this household's own Home/Insights/Plan
+  // pages via budgetSnapshot.ts's uncovered-category pass (security audit
+  // finding H1). Fails closed: nothing below runs if this doesn't match.
+  const ownedCategory = await prisma.category.findFirst({
+    where: { id: categoryId, householdId: session.householdId },
+    select: { id: true },
+  });
+  if (!ownedCategory) {
+    throw new Error("Category does not belong to this household.");
+  }
+
   let siblingsUpdated = 0;
   let learnedMappingCategoryId: string | null = null;
 

@@ -54,6 +54,14 @@ export async function addCommitment(formData: FormData): Promise<void> {
   const categoryId = parseCategoryId(formData.get("categoryId"));
   if (!name || !amount || !expectedDate || !categoryId) return;
 
+  // categoryId is a client-controlled <select> value — treat one that
+  // doesn't belong to this household exactly like a missing/invalid one
+  // (silent no-op, matching the validation above) rather than ever writing
+  // a foreign categoryId onto this household's data (security audit
+  // finding H1).
+  const ownedCategory = await prisma.category.findFirst({ where: { id: categoryId, householdId: session.householdId }, select: { id: true } });
+  if (!ownedCategory) return;
+
   try {
     const created = await prisma.upcomingCommitment.create({
       data: {
@@ -92,6 +100,10 @@ export async function updateCommitment(formData: FormData): Promise<void> {
   const recurrence = parseRecurrence(formData.get("recurrence"));
   const categoryId = parseCategoryId(formData.get("categoryId"));
   if (!name || !amount || !expectedDate || !categoryId) return;
+
+  // Same categoryId ownership check as addCommitment above (security audit finding H1).
+  const ownedCategory = await prisma.category.findFirst({ where: { id: categoryId, householdId: session.householdId }, select: { id: true } });
+  if (!ownedCategory) return;
 
   try {
     const { count } = await prisma.upcomingCommitment.updateMany({

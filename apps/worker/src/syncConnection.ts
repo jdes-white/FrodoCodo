@@ -1,4 +1,4 @@
-import { prisma } from "@frodocodo/db";
+import { prisma, encryptForStorage } from "@frodocodo/db";
 import { toMoney, formatCalendarDate } from "@frodocodo/shared";
 import {
   normalizeMerchant,
@@ -144,7 +144,9 @@ export async function syncConnection(provider: FinancialDataProvider, connection
           suggestedCategorySource: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessSource ?? null) : null,
           suggestedCategoryConfidence: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessConfidence ?? null) : null,
           syncRunId: syncRun.id,
-          rawProviderPayload: tx.raw as never,
+          // Never stored as plaintext (security audit finding H3) — see
+          // packages/db/src/payloadEncryption.ts.
+          rawProviderPayload: (encryptForStorage(tx.raw) ?? null) as never,
         },
       });
       imported++;

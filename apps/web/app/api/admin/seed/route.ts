@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { seedDemoHousehold } from "@frodocodo/db";
+import { isSeedingAllowed } from "@/lib/seedGuard";
 
 /**
  * One-time (or reset-on-demand) trigger for populating the beta deployment
@@ -13,10 +14,21 @@ import { seedDemoHousehold } from "@frodocodo/db";
  *
  * Protected by SEED_TOKEN (a low-sensitivity operational secret, distinct
  * from the database credentials) so this endpoint can't be triggered by
- * anyone who merely finds the URL. There is no real household data behind
- * it yet, but the same protection stays in place regardless.
+ * anyone who merely finds the URL — but a leaked token must never be
+ * sufficient on its own to wipe a production database (security audit
+ * finding C2), so production is blocked unconditionally below, before the
+ * token is even checked. There is no environment variable that re-enables
+ * this in production; the only way to seed a production-like deployment
+ * is to run it with NODE_ENV unset to "production" (see lib/seedGuard.ts).
  */
 export async function POST(request: Request): Promise<NextResponse> {
+  if (!isSeedingAllowed(process.env.NODE_ENV)) {
+    return NextResponse.json(
+      { error: "Demo seeding is disabled in production. This endpoint only runs in non-production environments." },
+      { status: 403 },
+    );
+  }
+
   const token = request.headers.get("x-seed-token") ?? new URL(request.url).searchParams.get("token");
   const expected = process.env.SEED_TOKEN;
 

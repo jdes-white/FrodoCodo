@@ -740,6 +740,30 @@ model NorthStarAssumptions {
 
 // ---------- Audit ----------
 
+// Persistent login-attempt log backing apps/web/lib/loginRateLimit.ts
+// (security audit finding H2). Persistent rather than in-memory because
+// Render can restart the container at any time — an in-memory counter
+// would silently reset a brute-force lockout on every restart. `identifier`
+// is the normalized (trimmed, lowercased) email from the login form, kept
+// even for emails that don't correspond to a real user — the limiter must
+// throttle guesses against nonexistent accounts identically to real ones,
+// or its own behaviour would become an account-enumeration oracle.
+// `ipAddress` is best-effort (null when no proxy header is present, e.g.
+// local dev) and is only ever used as a coarse secondary cap, never as the
+// sole key, so two household members sharing one IP never lock each other
+// out. Old rows are pruned opportunistically (see recordLoginAttempt) —
+// there's no need to keep more than a day of this for a two-user household.
+model LoginAttempt {
+  id         String   @id @default(cuid())
+  identifier String
+  ipAddress  String?
+  succeeded  Boolean
+  createdAt  DateTime @default(now())
+
+  @@index([identifier, createdAt])
+  @@index([ipAddress, createdAt])
+}
+
 model AuditEvent {
   id           String   @id @default(cuid())
   householdId  String
