@@ -18,6 +18,18 @@ describe("buildConsentUiUrl (Task 7A.1 item 3 — URL construction only, never l
     expect(parsed.searchParams.get("action")).toBe("connect");
   });
 
+  it("includes institutionId when the caller already knows which institution to connect (Task 7A.2)", () => {
+    const url = buildConsentUiUrl({ clientToken: "client-token-abc", state: "state-xyz", institutionId: "inst-cba-1" });
+    const parsed = new URL(url);
+    expect(parsed.searchParams.get("institutionId")).toBe("inst-cba-1");
+  });
+
+  it("omits institutionId when not supplied", () => {
+    const url = buildConsentUiUrl({ clientToken: "client-token-abc", state: "state-xyz" });
+    const parsed = new URL(url);
+    expect(parsed.searchParams.has("institutionId")).toBe(false);
+  });
+
   it("requires a non-empty clientToken", () => {
     expect(() => buildConsentUiUrl({ clientToken: "", state: "state-xyz" })).toThrow(/clientToken/);
   });

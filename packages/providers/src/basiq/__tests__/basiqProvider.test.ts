@@ -185,6 +185,20 @@ describe("BasiqProvider (Task 7A) — every call goes through an injected mock, 
     expect(result.transactions.map((t) => t.providerTransactionId)).toEqual(["tx-new"]);
   });
 
+  it("builds the transaction filter query with Basiq's documented `gteq` operator, not `gte` (Task 7A.2 correction)", async () => {
+    const fetch = fakeBasiqBackend([TOKEN_RESPONSE, jsonResponse({ data: [] })]);
+    const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fetch));
+    await provider.syncTransactions("basiq::user-1::conn-1", { sinceDate: "2026-08-01" });
+
+    const requestUrl = decodeURIComponent((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]![0] as string);
+    expect(requestUrl).toContain("transaction.postDate.gteq('2026-08-01')");
+    expect(requestUrl).not.toContain("postDate.gte(");
+    expect(requestUrl).toContain("connection.id.eq('conn-1')");
+    // Basiq's documented convention: comma-separated filters are ANDed.
+    expect(requestUrl).toContain("connection.id.eq('conn-1'),transaction.postDate.gteq('2026-08-01')");
+    expect(requestUrl).toContain("limit=500");
+  });
+
   it("is idempotent: re-syncing with the exact same Basiq response yields identical normalized output", async () => {
     const rawResponse = jsonResponse({
       data: [
@@ -207,18 +221,31 @@ describe("BasiqProvider (Task 7A) — every call goes through an injected mock, 
     // the same underlying data, which is the precondition dedupe relies on.
   });
 
-  it("initiateConnection creates a fresh Basiq user when no existingProviderUserId is given", async () => {
+  it("initiateConnection creates a fresh Basiq user with the supplied contact when no existingProviderUserId is given", async () => {
     const fetch = fakeBasiqBackend([
       TOKEN_RESPONSE,
       jsonResponse({ id: "new-user-1" }), // POST /users
       jsonResponse({ id: "conn-1" }), // POST /users/new-user-1/connections
     ]);
     const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fetch));
-    const result = await provider.initiateConnection("inst-cba");
+    const result = await provider.initiateConnection("inst-cba", undefined, { email: "household@example.com" });
 
     expect(result.providerConnectionId).toBe("basiq::new-user-1::conn-1");
     const userCreateCall = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]!;
     expect(userCreateCall[0]).toContain("/users");
+    expect((userCreateCall[1] as { body: string }).body).toContain("household@example.com");
+  });
+
+  it("initiateConnection throws rather than sending an empty POST /users body when no contact or existing user is given (Task 7A.2)", async () => {
+    const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fakeBasiqBackend([TOKEN_RESPONSE])));
+    await expect(provider.initiateConnection("inst-cba")).rejects.toThrow(/email or mobile/i);
+  });
+
+  it("initiateConnection accepts a mobile-only contact, matching Basiq's either-or requirement", async () => {
+    const fetch = fakeBasiqBackend([TOKEN_RESPONSE, jsonResponse({ id: "new-user-2" }), jsonResponse({ id: "conn-9" })]);
+    const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fetch));
+    const result = await provider.initiateConnection("inst-cba", undefined, { mobile: "+61410888999" });
+    expect(result.providerConnectionId).toBe("basiq::new-user-2::conn-9");
   });
 
   it("initiateConnection reuses an existing Basiq user for a household's second institution (Task 7A.1 item 4)", async () => {

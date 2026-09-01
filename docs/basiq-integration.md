@@ -36,6 +36,28 @@ garbage. See each section below for what changed. **Still no real Basiq
 API key, Basiq user, CDR consent, or bank connection was ever used —
 same hard stop as Task 7A.**
 
+**Task 7A.2 correction pass (this revision):** this sandbox still cannot
+reach `api.basiq.io`/`au-api.basiq.io` (confirmed again this task —
+`EGRESS_BLOCKED`/`connect_rejected` on both hosts), so instead of sandbox
+execution this pass re-checked the adapter against Basiq's **current
+official documentation**, reached via `WebSearch` (which returns
+indexed summaries of `api.basiq.io/docs/*` and `api.basiq.io/reference/*`
+pages — the pages themselves are unreachable by direct fetch, but their
+indexed content is not). Every claim below is explicitly tagged:
+
+- **VERIFIED AGAINST CURRENT OFFICIAL BASIQ DOCUMENTATION** — corroborated
+  by at least one specific, quotable statement from Basiq's own published
+  docs/reference pages found via search.
+- **REQUIRES AUTHENTICATED SANDBOX VERIFICATION** — Basiq's public
+  documentation doesn't state this precisely enough (or wasn't found),
+  and only a real authenticated API call against sandbox can close it.
+
+This pass found and fixed two real wire-protocol mismatches (the
+transaction filter operator and the `POST /users` request body — see
+below) and added one documented-but-missing Consent UI parameter. It did
+not change anything else: no refactor, no new UI, no broadened consent
+scope, no live connection, no blast-radius review.
+
 ---
 
 ## Architecture
@@ -142,6 +164,27 @@ browser directly by this adapter — the resulting URL (built by
 `consentUi.ts`) is what a server-rendered redirect would send the
 browser to, not the token in isolation.
 
+**Task 7A.2 — VERIFIED AGAINST CURRENT OFFICIAL BASIQ DOCUMENTATION**:
+Basiq's own Authentication documentation confirms the exact request shape
+this adapter sends for both token types — `SERVER_ACCESS` server-to-server
+calls use `Authorization: Basic <api key>`, `Content-Type:
+application/x-www-form-urlencoded`, header `basiq-version: 3.0`, and body
+`scope=SERVER_ACCESS`; a `CLIENT_ACCESS` token additionally carries
+`userId` in the body (`scope=CLIENT_ACCESS&userId=<id>`) to bind it to one
+user — both match `httpClient.ts` exactly. Basiq's docs also state plainly
+that **access tokens expire every 60 minutes** and should be cached for
+reuse rather than re-requested per call — this upgrades the server-token
+lifetime from Task 7A.1's "unconfirmed, assumed short-lived" to a
+documented ~3600-second figure; the code still always uses whatever
+`expires_in` the live `/token` response reports rather than hardcoding
+3600, so no code change was needed, only the confidence level of this
+note. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION**: the exact
+`expires_in` value for a `CLIENT_ACCESS` token specifically (the "60
+minutes" documentation covers "access tokens" generally without
+distinguishing the two types), and whether Basiq enforces any additional
+constraint on how a `CLIENT_ACCESS` token may be used beyond what's
+described above.
+
 **Unresolved (do not treat as confirmed):** the exact JSON field name(s)
 Basiq's Consent Policy dashboard configuration stores these scope strings
 under, and whether `bank:accounts.basic:read` implicitly includes balance
@@ -156,7 +199,7 @@ configuring a real consent policy — see the setup checklist below.
 Basiq's documented hosted Consent UI pattern is a browser redirect to:
 
 ```
-https://consent.basiq.io/home?token=<user-bound CLIENT_ACCESS token>&state=<state>[&action=connect]
+https://consent.basiq.io/home?token=<user-bound CLIENT_ACCESS token>&action=connect&state=<state>[&institutionId=<id>]
 ```
 
 `packages/providers/src/basiq/consentUi.ts` exposes exactly two pure
@@ -167,12 +210,33 @@ functions, neither of which fetches or navigates anywhere:
   stores server-side against the in-flight connection attempt, so the
   eventual return/callback can be verified against it — CSRF/mix-up
   protection for the redirect round-trip.
-- `buildConsentUiUrl({ clientToken, state, action? })` — builds the URL
-  string above. `action: "connect"` is Basiq's documented action for a
-  household that already has an active Basiq user/consent and is adding
-  **another** institution connection, rather than completing their first
-  consent (see the multi-institution model below). Omit it for a
-  household's first institution.
+- `buildConsentUiUrl({ clientToken, state, action?, institutionId? })` —
+  builds the URL string above. `action: "connect"` is Basiq's documented,
+  recommended action for a household that already has an active Basiq
+  user/consent and is adding **another** institution connection, rather
+  than completing their first consent (see the multi-institution model
+  below). `institutionId` (added Task 7A.2) is Basiq's documented optional
+  parameter for when the caller already knows which institution the
+  household intends to connect (CBA/Virgin's `providerInstitutionId` from
+  `listSupportedInstitutions`) — passing it skips the institution-picker
+  step in the hosted UI.
+
+**Task 7A.2 — VERIFIED AGAINST CURRENT OFFICIAL BASIQ DOCUMENTATION**
+(Basiq's "Consent Parameters"/"Consent Actions" reference, and its
+changelog entry introducing the `state` parameter): the base URL and all
+three query parameters (`token`, `action`, `state`) and the additional
+`institutionId` parameter this pass added; that the `CLIENT_ACCESS` token
+must be bound to the target `userId`; that `state` must be URL-encoded if
+it contains special characters (this adapter's `URLSearchParams.set`
+already does this automatically); and that `action=connect` is the
+documented, recommended default when initiating a consent request (Basiq
+also documents that omitting `action` is supported, which is why this
+adapter still treats it as optional rather than mandatory).
+**REQUIRES AUTHENTICATED SANDBOX VERIFICATION**: the exact behavior/error
+response when `institutionId` refers to an institution outside a caller's
+enabled set, and the exact shape of the return/callback Basiq sends after
+the household completes or cancels consent (still not built — see
+unresolved item 5 below).
 
 Neither function ever logs, throws with, or otherwise surfaces the token
 value in an error message — proven by `consentUi.test.ts`. **This task
@@ -182,7 +246,66 @@ happens in a later, sandbox-connected task.
 
 ---
 
+## Basiq user creation contract (Task 7A.2 correction)
+
+Task 7A/7A.1's `initiateConnection` called `POST /users` with an **empty
+body** (`{}`) when creating a fresh Basiq user. Basiq's current official
+`createuser` reference documents `email` and `mobile` as **conditional**
+fields — one of the two is mandatory (email is mandatory if mobile isn't
+supplied, and vice versa) — so an empty body would have been rejected by
+the real API on the very first live call.
+
+**Fix**: `initiateConnection` gained a third optional parameter,
+`newUserContact?: { email?: string; mobile?: string }`. When creating a
+new Basiq user (i.e. `existingProviderUserId` is not supplied), the
+adapter now throws a clear error rather than sending an empty/invalid
+request if neither `email` nor `mobile` is present in `newUserContact`;
+when one is present, it's passed straight through in the `POST /users`
+body. `MockProvider` accepts and ignores this parameter, same as
+`existingProviderUserId`.
+
+This is Basiq's own linking-identifier requirement for creating their
+internal user object, distinct from the CDR consent-data-cluster
+boundary this integration refuses to broaden (`bank:accounts.detail:read`,
+`common:customer.basic:read`, etc. — see the scope section above): sending
+a household's own email to Basiq to create their linking user record is
+not the same thing as requesting Basiq return the household's identity
+data back to FrodoCodo, and nothing in this adapter reads `newUserContact`
+back out of any response or persists it beyond the one outbound call.
+**Which identifier a real caller should supply, and from where (e.g. the
+connecting household admin's already-stored login email), is left to that
+future caller** — this task only corrects the wire contract, it does not
+build or wire up a real connection-initiation flow (still none exists in
+`apps/web`).
+
+**VERIFIED AGAINST CURRENT OFFICIAL BASIQ DOCUMENTATION**: the
+conditional-mandatory email-or-mobile requirement, the request body shape
+(`{ email, mobile, firstName, lastName }`), and the `201 Created` success
+response containing the created user object with an `id` field — this
+adapter's `{ id: string }` response typing matches. **REQUIRES
+AUTHENTICATED SANDBOX VERIFICATION**: the exact error response Basiq
+returns when both `email` and `mobile` are omitted (this adapter avoids
+that call entirely by validating first, so its own behavior here doesn't
+depend on that error shape) and whether Basiq de-duplicates/rejects a
+second user created with an email already in use.
+
+Tested in `basiqProvider.test.ts`: creating a user with only `email`, with
+only `mobile`, and the case that must throw before ever calling `POST
+/users` at all.
+
+---
+
 ## Account fields: transient vs permanently persisted (Task 7A item 4)
+
+**VERIFIED AGAINST CURRENT OFFICIAL BASIQ DOCUMENTATION**: the endpoint
+itself — Basiq's own reference states the "List all accounts" endpoint is
+`GET https://au-api.basiq.io/users/{userId}/accounts`, matching this
+adapter's base URL (`https://au-api.basiq.io`) and path exactly, no
+change needed. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION**: the exact
+field-level shape below (Basiq's public reference confirms the endpoint
+and that accounts carry a number, balance, and available-funds figure,
+but the search-indexed summaries available to this pass didn't quote the
+precise JSON attribute names character-for-character).
 
 | Field | During account discovery (Basiq's real response) | Permanently persisted? |
 |---|---|---|
@@ -279,6 +402,24 @@ adds such a method, this test fails immediately.
   (`"pending"`/`"posted"`, per its documented convention) maps directly to
   FrodoCodo's `TransactionStatus` enum; `postingDate` is only ever set once
   status is `POSTED`. Tested explicitly in `basiqProvider.test.ts`.
+  **Task 7A.2 — VERIFIED AGAINST CURRENT OFFICIAL BASIQ DOCUMENTATION**:
+  a real Basiq transaction object also carries `direction` (`"debit"`/
+  `"credit"`) as its own explicit field, and `amount` is a signed decimal
+  string (negative for debits) — both confirmed by quoted examples in
+  Basiq's own docs (`"amount": "-39.50"` with `"direction": "debit"`).
+  This adapter derives `direction` from `amount`'s sign
+  (`splitSignedAmount`) rather than reading Basiq's own `direction` field
+  directly; the two are documented to always agree, so this is not a
+  functional bug, only a note that the type shape in `types.ts` doesn't
+  yet declare `direction` as a field this adapter *could* read directly
+  — left as-is since correcting it wouldn't change any output and this
+  task's scope is fixing actual mismatches, not stylistic re-derivation.
+  Basiq's docs also show `postDate` as a full ISO 8601 timestamp (e.g.
+  `"2017-08-01T00:00:00Z"`), not a bare date — this adapter's `>=` string
+  comparison against a `YYYY-MM-DD` `sinceDate` still orders correctly
+  (ISO 8601 timestamps and date-only strings compare correctly as strings
+  on their shared year/month/day prefix), so no functional bug here
+  either.
 - **Idempotent re-sync**: proven by a test that runs `syncTransactions`
   twice against two independent `BasiqProvider` instances fed the exact
   same scripted response, asserting the normalized output (ID, amount,
@@ -289,18 +430,33 @@ adds such a method, this test fails immediately.
 - **No fuzzy deduplication was added**, per the task's explicit
   instruction — matching stays exact-ID-based (or the documented
   pending→posted heuristic already in place before this task).
-- **`sinceDate`/`accountProviderIds` filtering**: attempted server-side via
-  a best-effort Basiq filter query string built from Basiq's documented
-  filter field names for this endpoint (`connection.id`,
-  `transaction.postDate`) plus `limit=500` (Basiq's documented maximum page
-  size) — Task 7A.1 correction: scoping by `connection.id` (rather than no
-  connection scoping at all) keeps the request from pulling every
-  transaction the Basiq user has ever synced across every institution, not
-  just this one. **And always re-applied in-memory** regardless of whether
-  the server-side filter syntax turns out correct — this guarantees the
-  filtering contract holds even though the exact Basiq filter query
-  grammar could not be confirmed from this sandbox. Tested in
-  `basiqProvider.test.ts`.
+- **`sinceDate`/`accountProviderIds` filtering**: server-side via a Basiq
+  filter query string built from Basiq's documented filter field names for
+  this endpoint (`connection.id`, `transaction.postDate`) plus `limit=500`.
+  **Task 7A.2 correction:** Basiq's "Collections & Filters" reference
+  documents six filter operators — `eq`, `bt`, `gt`, `gteq`, `lt`, `lteq` —
+  and Task 7A/7A.1 used `gte`, which is not one of them and would have
+  been rejected or silently ignored by the real API. This is now
+  `transaction.postDate.gteq('YYYY-MM-DD')`.
+  **VERIFIED AGAINST CURRENT OFFICIAL BASIQ DOCUMENTATION**: the operator
+  name (`gteq`, not `gte`) and the multi-filter-as-comma-separated-AND
+  convention (`?filter=transaction.postDate.bt('d1','d2'),account.id.eq('x')`,
+  per Basiq's own documented example) — this adapter's
+  `connection.id.eq('...'),transaction.postDate.gteq('...')` construction
+  matches that pattern exactly, and the whole joined filter string is
+  `encodeURIComponent`-escaped, consistent with standard query-parameter
+  encoding. The `limit=500` maximum page size for the transactions
+  endpoint is also documented ("transactions are paginated in chunks of
+  500"). **REQUIRES AUTHENTICATED SANDBOX VERIFICATION**: whether
+  `/users/{userId}/transactions` specifically (as opposed to Basiq's
+  filtering system generally) accepts a `connection.id` filter term
+  combined with a `transaction.postDate` term in the same request, and the
+  exact behavior of `limit` when explicitly set to 500 vs. omitted.
+  **And always re-applied in-memory** regardless of whether the
+  server-side filter is honoured exactly as constructed — this guarantees
+  the filtering contract holds either way. Tested in
+  `basiqProvider.test.ts`, including a test asserting the built query
+  string uses `gteq` and never `gte`.
 - **Malformed/untrusted response handling (Task 7A.1 item 8)**: Basiq's
   responses are untrusted external input. `isValidBasiqAccount`/
   `isValidBasiqTransaction` in `basiqProvider.ts` check the handful of
@@ -366,12 +522,26 @@ database and the real server action, running through `createFinancialProvider()`
 inactive/revoked, both token columns are null, and the account and its
 transactions still exist with an unchanged count afterward.
 
-**Unresolved**: the exact Basiq revoke-endpoint response shape/status
-code on success could not be confirmed from this sandbox;
-`BasiqHttpClient.delete` treats any non-2xx response as a hard failure,
-which is the conservative default and doesn't need to change — but
-confirm this matches Basiq's real behavior before relying on it in
-production.
+**Task 7A.2 update**: the endpoint path itself — `DELETE
+/users/{userId}/connections/{connectionId}` — follows the same resource
+path already used for `POST /users/{userId}/connections` (connection
+creation) and `GET .../connections/{connectionId}` (consent status), a
+RESTful convention Basiq's own "Connections" reference describes
+generally ("connections can be deleted"). A `204 No Content` on
+successful deletion is the standard REST convention this class of
+endpoint follows, and — importantly — no code change was needed either
+way: `BasiqHttpClient.delete` already checks `res.ok`, which the Fetch
+API defines as true for the entire 200–299 range, so it already treats a
+204 (or 200, or any other 2xx) as success without needing to check for
+one specific status code. **REQUIRES AUTHENTICATED SANDBOX
+VERIFICATION**: the exact status code and response body Basiq's live
+`DELETE` endpoint actually returns, and whether deleting a connection
+also deletes Basiq's own copy of that connection's account/transaction
+data (Basiq's docs describe this behavior for the general connection
+deletion flow) — this doesn't affect FrodoCodo's own local data
+retention (see "What's preserved vs removed" above), which is governed
+entirely by this app's own disconnect logic, not by what Basiq does on
+its side.
 
 ---
 
@@ -397,66 +567,73 @@ production.
 
 ## Unresolved pre-live items (do not connect a real account until these are checked)
 
-1. **Basiq's exact institution ID for CBA and Virgin Money** — resolved by
-   this adapter's design (live name-matching, never hardcoded), but the
-   actual IDs returned by a real `GET /institutions` call have never been
-   seen from this environment.
-2. **Exact Basiq Consent Policy dashboard field names/values** for
-   configuring `bank:accounts.basic:read`/`bank:transactions:read` —
-   corroborated at the concept level (Task 7A.1 confirmed these are real
-   CDR-namespaced scope strings, distinct from the API token scope), not
-   at the exact dashboard-configuration wire-format level.
-3. **Exact Basiq API endpoint paths and payload shapes** used throughout
-   `basiqProvider.ts` (`/users`, `/users/{id}/connections`,
-   `/users/{id}/accounts`, `/users/{id}/transactions`, the `/token`
-   exchange) — modeled on Basiq's documented conventions, not verified
-   character-for-character against the live API reference. This includes
-   the exact filter query grammar `/users/{id}/transactions` accepts
-   (Task 7A.1 aligned the field names used — `connection.id`,
-   `transaction.postDate` — to Basiq's documented filter fields, but the
-   precise syntax remains unverified; the in-memory filter is the real
-   correctness guarantee regardless).
-4. **Server-level token lifetime (`expires_in`)** — this adapter always
-   uses whatever value Basiq's `/token` response reports, never a
-   hardcoded assumption; Basiq's documented convention is understood to be
-   ~60 minutes for both SERVER_ACCESS and CLIENT_ACCESS tokens, but the
-   exact live value is unconfirmed from this sandbox.
-5. **The hosted Consent-UI redirect flow end-to-end** — Task 7A.1 added
-   `consentUi.ts`'s URL builder (`https://consent.basiq.io/home?token=...`)
-   as a tested, pure construction function, but it has never been launched
-   against a real browser or wired into any route; `initiateConnection`
-   still omits `redirectUrl` rather than guessing how a real caller should
-   sequence "get CLIENT_ACCESS token → build Consent UI URL → redirect →
-   handle the `state`-verified return."
-6. **Multi-institution household flow — now supported at the adapter
-   level, not yet wired into a real caller.** Task 7A.1 added an optional
-   `existingProviderUserId` parameter to `initiateConnection` (skips
-   `POST /users` and creates the new connection directly under the
-   existing Basiq user) and an exported `getBasiqUserIdFromConnectionId`
-   helper so a caller with household/database context (which
-   `packages/providers` deliberately never has — see CLAUDE.md) can decode
-   an existing active Basiq connection's user ID and pass it through when
-   connecting a household's second institution. **No real connect-flow UI
-   exists in `apps/web` yet** (only `disconnectInstitution` does) — this
-   capability is ready for that future caller, not yet exercised outside
-   unit tests.
-7. **Basiq's exact account-class taxonomy** for distinguishing
-   TRANSACTION from SAVINGS accounts — Basiq is understood to sometimes
-   report a combined class for both; `packages/providers/src/basiq/basiqProvider.ts`'s
-   `mapAccountType` documents why this ambiguity doesn't affect
-   correctness (accountType's only real dependency is the
-   credit-card-vs-not distinction).
-8. **Basiq's connection-revoke endpoint's exact success response shape.**
-9. Everything already flagged unresolved in
+**Resolved by Task 7A.2's documentation re-check** (moved out of this list
+— see the inline sections above for detail): the transaction filter
+operator (`gte` → `gteq`), the `POST /users` empty-body contract
+(now `newUserContact`), the Consent UI's documented `institutionId`
+parameter, and the server-token ~60-minute lifetime (now a documented
+figure rather than an unconfirmed guess). Everything below either
+genuinely requires authenticated sandbox access, or is resolved by a
+design choice that doesn't depend on the unconfirmed detail — none of it
+was worked around, assumed favorably, or silently guessed past.
+
+1. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — Basiq's exact
+   institution ID for CBA and Virgin Money** — resolved at the design
+   level (live name-matching, never hardcoded — see "Institution
+   resolution" above), but the actual IDs returned by a real
+   `GET /institutions` call have never been seen from this environment.
+2. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — exact Basiq Consent
+   Policy dashboard field names/values** for configuring
+   `bank:accounts.basic:read`/`bank:transactions:read` — corroborated at
+   the concept level (these are real CDR-namespaced scope strings, and
+   distinct from the API token scope — confirmed against official docs),
+   not at the exact dashboard-configuration wire-format level, since that
+   configuration UI itself isn't part of the public API reference.
+3. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — exact response body
+   shapes** for `/users` (create), `/users/{id}/connections` (create),
+   `/users/{id}/accounts`, and `/users/{id}/transactions`. The endpoint
+   *paths*, the token exchange, the filter grammar, and the pagination
+   convention are now VERIFIED AGAINST CURRENT OFFICIAL BASIQ
+   DOCUMENTATION (see the inline sections above); what remains unverified
+   is the character-for-character JSON attribute shape of each resource
+   object, since the search-indexed documentation available to this pass
+   didn't quote every field name directly.
+4. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — the hosted Consent-UI
+   redirect flow end-to-end.** `consentUi.ts`'s URL builder
+   (`https://consent.basiq.io/home?token=...&action=...&state=...`,
+   including the now-added `institutionId`) is VERIFIED AGAINST CURRENT
+   OFFICIAL BASIQ DOCUMENTATION as a construction function, but it has
+   never been launched against a real browser or wired into any route;
+   `initiateConnection` still omits `redirectUrl` rather than guessing how
+   a real caller should sequence "get CLIENT_ACCESS token → build Consent
+   UI URL → redirect → handle the `state`-verified return."
+5. **Multi-institution household flow — supported at the adapter level
+   (VERIFIED design, not sandbox-dependent), not yet wired into a real
+   caller.** `initiateConnection`'s optional `existingProviderUserId`
+   parameter (skips `POST /users` and creates the new connection directly
+   under the existing Basiq user) and the exported
+   `getBasiqUserIdFromConnectionId` helper let a caller with
+   household/database context (which `packages/providers` deliberately
+   never has — see CLAUDE.md) reuse a household's existing Basiq user for
+   a second institution. **No real connect-flow UI exists in `apps/web`
+   yet** (only `disconnectInstitution` does) — this capability is ready
+   for that future caller, not yet exercised outside unit tests.
+6. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — Basiq's exact
+   account-class taxonomy** for distinguishing TRANSACTION from SAVINGS
+   accounts — Basiq is understood to sometimes report a combined class for
+   both; `packages/providers/src/basiq/basiqProvider.ts`'s `mapAccountType`
+   documents why this ambiguity doesn't affect correctness (accountType's
+   only real dependency is the credit-card-vs-not distinction).
+7. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — Basiq's
+   connection-revoke endpoint's exact success status code/response
+   body** — the endpoint path follows an already-used RESTful convention
+   and this adapter's `res.ok` check already treats any 2xx as success
+   (see "Disconnect/revocation" above), so no code change is blocked on
+   this, only final confirmation.
+8. Everything already flagged unresolved in
    `docs/banking-data-minimisation-audit.md` (Amex's CDR status/cohort,
    exact CDR scope string spelling) remains unresolved and out of this
    task's scope (Amex is explicitly excluded from this adapter).
-
-None of the above were worked around, assumed favorably, or silently
-guessed past — each is either resolved by a design choice that doesn't
-depend on the unconfirmed detail (name-matching instead of a hardcoded
-ID; in-memory-only server token instead of guessing its exact lifetime) or
-explicitly listed here as a pre-live confirmation step.
 
 ---
 

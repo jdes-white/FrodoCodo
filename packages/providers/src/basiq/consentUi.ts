@@ -34,6 +34,15 @@ export interface ConsentUiUrlOptions {
    * reused across requests.
    */
   state: string;
+  /**
+   * Task 7A.2: Basiq's current official Consent UI documentation confirms
+   * an optional `institutionId` parameter — when the caller already knows
+   * which institution the household intends to connect (CBA or Virgin's
+   * `providerInstitutionId`, already resolved by `listSupportedInstitutions`),
+   * passing it here skips the institution-selection step in the hosted UI.
+   * Omit to let the household pick from Basiq's institution list.
+   */
+  institutionId?: string;
 }
 
 /**
@@ -50,11 +59,18 @@ export function buildConsentUiUrl(options: ConsentUiUrlOptions): string {
     throw new Error("buildConsentUiUrl requires a non-empty state value.");
   }
 
+  // Param order mirrors Basiq's own documented example
+  // (token, action, state) with institutionId appended, per its Consent
+  // Parameters reference — query param order has no functional effect,
+  // this is purely for fidelity to the documented example.
   const url = new URL(CONSENT_UI_BASE_URL);
   url.searchParams.set("token", options.clientToken);
-  url.searchParams.set("state", options.state);
   if (options.action) {
     url.searchParams.set("action", options.action);
+  }
+  url.searchParams.set("state", options.state);
+  if (options.institutionId) {
+    url.searchParams.set("institutionId", options.institutionId);
   }
   return url.toString();
 }

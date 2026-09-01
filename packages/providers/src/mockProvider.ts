@@ -50,7 +50,11 @@ export class MockProvider implements FinancialDataProvider {
     return MOCK_INSTITUTIONS;
   }
 
-  async initiateConnection(institutionId: string, _existingProviderUserId?: string): Promise<InitiateConnectionResult> {
+  async initiateConnection(
+    institutionId: string,
+    _existingProviderUserId?: string,
+    _newUserContact?: { email?: string; mobile?: string },
+  ): Promise<InitiateConnectionResult> {
     // MockProvider has no provider-level user concept to reuse — accepted
     // and ignored here purely to satisfy FinancialDataProvider's shared
     // signature (see that interface's doc comment).

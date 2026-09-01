@@ -75,9 +75,35 @@ export class BasiqProvider implements FinancialDataProvider {
    * that URL requires a CLIENT_ACCESS token, obtained separately, and is
    * deliberately not wired into this call). Never guess a URL a real
    * household would be redirected to.
+   *
+   * Task 7A.2 correction: Task 7A/7A.1 called `POST /users` with an empty
+   * body. Basiq's current official `createuser` reference documents email
+   * and mobile as CONDITIONAL fields — one of the two is mandatory (email
+   * mandatory if mobile isn't supplied, and vice versa); an empty body
+   * would be rejected by the real API. `newUserContact` is how a caller
+   * supplies this when NOT reusing an existing Basiq user; this method
+   * throws rather than silently sending an empty/invalid body if neither
+   * is provided. This is Basiq's own linking-identifier requirement for
+   * creating their internal user object — it is not a request to pull any
+   * CDR customer-identity data, and nothing here reads it back or persists
+   * it beyond this one outbound call.
    */
-  async initiateConnection(institutionId: string, existingProviderUserId?: string): Promise<InitiateConnectionResult> {
-    const basiqUserId = existingProviderUserId ?? (await this.http.post<{ id: string }>("/users", {})).id;
+  async initiateConnection(
+    institutionId: string,
+    existingProviderUserId?: string,
+    newUserContact?: { email?: string; mobile?: string },
+  ): Promise<InitiateConnectionResult> {
+    let basiqUserId = existingProviderUserId;
+    if (!basiqUserId) {
+      if (!newUserContact?.email && !newUserContact?.mobile) {
+        throw new Error(
+          "Basiq's POST /users contract requires an email or mobile to create a new user — pass newUserContact " +
+            "{ email } or { mobile } to initiateConnection when existingProviderUserId is not supplied.",
+        );
+      }
+      const user = await this.http.post<{ id: string }>("/users", newUserContact);
+      basiqUserId = user.id;
+    }
     const connection = await this.http.post<{ id: string }>(`/users/${basiqUserId}/connections`, {
       institution: { id: institutionId },
     });
@@ -109,19 +135,25 @@ export class BasiqProvider implements FinancialDataProvider {
   ): Promise<ProviderSyncResult> {
     const { basiqUserId, basiqConnectionId } = decodeProviderConnectionId(providerConnectionId);
 
-    // Best-effort server-side filter using Basiq's documented filter field
-    // names for this endpoint (`connection.id`, `account.id`,
-    // `transaction.postDate` — see docs/basiq-integration.md's unresolved
-    // wire-format items for exactly which of these Basiq's filter grammar
-    // actually accepts on `/users/{userId}/transactions`, since that could
-    // not be confirmed from this environment). Scoping to this
-    // connection's ID keeps the request from pulling every transaction the
-    // Basiq user has ever synced, including from other institutions.
-    // `limit=500` matches Basiq's documented maximum page size. The
-    // in-memory filters below are the actual correctness guarantee
-    // regardless of whether any of this is honoured server-side.
+    // Server-side filter using Basiq's documented "Collections & Filters"
+    // grammar for this endpoint: comma-separated conditions are ANDed
+    // together (e.g. `filter=transaction.postDate.bt('d1','d2'),account.id.eq('x')`),
+    // and the operator for "greater than or equal to" is `gteq`, NOT `gte`
+    // — Task 7A.2 correction: Task 7A/7A.1 used `gte`, which is not one of
+    // Basiq's documented filter operators (`eq`, `bt`, `gt`, `gteq`, `lt`,
+    // `lteq`) and would have been silently ignored or rejected by the real
+    // API. Scoping by `connection.id` keeps the request from pulling every
+    // transaction the Basiq user has ever synced, including from other
+    // institutions. `limit=500` matches Basiq's documented maximum page
+    // size for this endpoint. The in-memory filters below remain the
+    // actual correctness guarantee regardless of whether this server-side
+    // filter is honoured exactly as constructed — see
+    // docs/basiq-integration.md for which parts of this are verified
+    // against Basiq's current official documentation vs. still requiring
+    // authenticated sandbox confirmation (e.g. the exact multi-filter
+    // combination Basiq accepts on this specific endpoint).
     const filters: string[] = [`connection.id.eq('${basiqConnectionId}')`];
-    if (options.sinceDate) filters.push(`transaction.postDate.gte('${options.sinceDate}')`);
+    if (options.sinceDate) filters.push(`transaction.postDate.gteq('${options.sinceDate}')`);
     const query = `?limit=500&filter=${encodeURIComponent(filters.join(","))}`;
 
     const rawTransactions = await this.http.getAllPages<BasiqTransaction>(`/users/${basiqUserId}/transactions${query}`);

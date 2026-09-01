@@ -117,8 +117,19 @@ export interface FinancialDataProvider {
    * (e.g. by decoding an existing active connection's providerConnectionId)
    * — `packages/providers` itself has no household/database context to
    * look it up (CLAUDE.md: these packages never import `@frodocodo/db`).
+   *
+   * `newUserContact` (Task 7A.2): Basiq's real `POST /users` contract
+   * requires an email or mobile to create a new provider-level user — this
+   * is how a caller supplies that identifier when `existingProviderUserId`
+   * is not given. MockProvider accepts and ignores it; BasiqProvider
+   * throws rather than sending an invalid/empty request if it's missing
+   * and a new user genuinely needs to be created.
    */
-  initiateConnection(institutionId: string, existingProviderUserId?: string): Promise<InitiateConnectionResult>;
+  initiateConnection(
+    institutionId: string,
+    existingProviderUserId?: string,
+    newUserContact?: { email?: string; mobile?: string },
+  ): Promise<InitiateConnectionResult>;
   getConsentStatus(providerConnectionId: string): Promise<ConsentInfo>;
   discoverAccounts(providerConnectionId: string): Promise<ProviderAccount[]>;
   syncTransactions(
