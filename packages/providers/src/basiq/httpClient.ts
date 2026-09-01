@@ -1,5 +1,5 @@
 import type { BasiqListResponse, BasiqTokenResponse } from "./types.js";
-import { BASIQ_SERVER_TOKEN_SCOPE } from "./scopes.js";
+import { BASIQ_TOKEN_SCOPES } from "./scopes.js";
 
 const BASIQ_API_BASE_URL = "https://au-api.basiq.io";
 
@@ -58,7 +58,7 @@ export class BasiqHttpClient {
         "Content-Type": "application/x-www-form-urlencoded",
         "basiq-version": "3.0",
       },
-      body: `scope=${BASIQ_SERVER_TOKEN_SCOPE}`,
+      body: `scope=${BASIQ_TOKEN_SCOPES.SERVER}`,
     });
 
     if (!res.ok) {
@@ -70,6 +70,40 @@ export class BasiqHttpClient {
     const token = (await res.json()) as BasiqTokenResponse;
     this.cachedToken = { accessToken: token.access_token, expiresAtMs: now + token.expires_in * 1000 };
     return this.cachedToken.accessToken;
+  }
+
+  /**
+   * Obtains a restricted, user-bound CLIENT_ACCESS token for `basiqUserId`
+   * — used ONLY to build a hosted Consent UI URL (`consentUi.ts`), never
+   * for any management API call. Deliberately NOT cached or reused across
+   * calls the way the SERVER token is: a CLIENT_ACCESS token is scoped to
+   * one specific user and is only ever needed transiently, immediately
+   * before constructing a Consent UI redirect, so persisting or reusing it
+   * would only create a stale-secret liability with no benefit. Never
+   * logged; never include this token's value in a thrown error message.
+   */
+  async getClientAccessToken(basiqUserId: string): Promise<{ token: string; expiresAtMs: number }> {
+    if (!basiqUserId) {
+      throw new Error("getClientAccessToken requires a non-empty basiqUserId.");
+    }
+
+    const now = Date.now();
+    const res = await this.fetchImpl(`${this.baseUrl}/token`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${this.apiKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "basiq-version": "3.0",
+      },
+      body: `scope=${BASIQ_TOKEN_SCOPES.CLIENT}&userId=${encodeURIComponent(basiqUserId)}`,
+    });
+
+    if (!res.ok) {
+      throw new Error(`Basiq client token request failed with status ${res.status}.`);
+    }
+
+    const token = (await res.json()) as BasiqTokenResponse;
+    return { token: token.access_token, expiresAtMs: now + token.expires_in * 1000 };
   }
 
   /** GETs a single Basiq resource, authenticated with the cached server token. */

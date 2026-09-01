@@ -1,4 +1,4 @@
-# Basiq provider adapter (Task 7A)
+# Basiq provider adapter (Task 7A, corrected in Task 7A.1)
 
 **Status: implemented, never connected.** `packages/providers/src/basiq/`
 implements a real Basiq adapter for **CBA and Virgin Money only** behind
@@ -22,16 +22,31 @@ live reference. Every such claim is flagged inline. **Re-verify all of it
 against Basiq's live API reference before this adapter is ever pointed at
 a real API key.**
 
+**Task 7A.1 correction pass (this revision):** Task 7A's original
+`BASIQ_REQUESTED_DATA_CLUSTERS = ["accounts", "transactions"]` conflated
+two genuinely different Basiq concepts — API authentication token scope
+and CDR consent-policy scope — into one vocabulary that was neither. This
+revision corrects that model, adds a Consent UI URL builder (construction
+only, never launched), adds a CLIENT_ACCESS token method, replaces
+substring institution-name matching with exact/approved-name matching plus
+explicit ambiguity rejection, aligns the transaction-sync filter query with
+Basiq's documented filter field names, and adds runtime validation so a
+malformed Basiq response is skipped rather than silently mapped into
+garbage. See each section below for what changed. **Still no real Basiq
+API key, Basiq user, CDR consent, or bank connection was ever used —
+same hard stop as Task 7A.**
+
 ---
 
 ## Architecture
 
 ```
 packages/providers/src/basiq/
-  scopes.ts            -- the exact data-cluster/scope boundary (§2)
+  scopes.ts            -- token scopes + CDR consent-policy scopes + institution allow-list (§2)
   types.ts              -- Basiq response shapes this adapter reads
-  httpClient.ts          -- auth (SERVER_ACCESS token, cached in-memory) + pagination
-  institutionMatch.ts    -- resolves CBA/Virgin by NAME against the live institutions list
+  httpClient.ts          -- auth (SERVER_ACCESS + CLIENT_ACCESS tokens) + pagination
+  institutionMatch.ts    -- resolves CBA/Virgin by exact NAME, fails closed on ambiguity
+  consentUi.ts           -- hosted Consent UI URL builder + state generator (construction only)
   basiqProvider.ts      -- the FinancialDataProvider implementation
 packages/providers/src/factory.ts  -- createFinancialProvider(): mock | basiq, by env
 ```
@@ -62,54 +77,108 @@ sensitive field survives.
 
 ---
 
-## Consent/data scope boundary (Task 7A item 2)
+## API token scope vs. CDR consent-policy scope (Task 7A.1 item 1 — corrects Task 7A)
 
-Basiq's own consent model — confirmed via its published documentation
-summaries — is a **consent policy** configured against the Basiq
-application in its dashboard, not a set of raw OAuth scope strings this
-adapter constructs per request. A consent policy is presented to the
-household when they connect an institution and names which data clusters
-it covers; Basiq's own material distinguishes households who "share only
-accounts" from those who "consented to share both accounts and
-transactions," confirming `accounts` and `transactions` are real, named,
-independently-grantable clusters in Basiq's model — not this project's own
-invention.
+Task 7A's `BASIQ_REQUESTED_DATA_CLUSTERS = ["accounts", "transactions"]`
+was a reasonable *intent* expressed in the wrong *vocabulary*, conflating
+two genuinely different Basiq concepts into one list. Basiq v3 actually
+distinguishes:
 
-`packages/providers/src/basiq/scopes.ts` declares exactly this boundary as
-constants:
+1. **API authentication token scope** — `SERVER_ACCESS` / `CLIENT_ACCESS`.
+   This IS a literal request parameter this adapter's code sends
+   (`scope=SERVER_ACCESS` or `scope=CLIENT_ACCESS` in the `/token`
+   exchange — see `httpClient.ts`). It controls which Basiq API
+   *endpoints* the resulting bearer token can call at all — it has nothing
+   to do with what banking data a household has consented to share.
+2. **CDR consent-policy scope** — `bank:accounts.basic:read`,
+   `bank:transactions:read`, etc. This is Basiq's own consent-policy
+   concept, **configured against the Basiq application in its dashboard**
+   (a human, pre-live setup step — see the setup checklist near the bottom
+   of this document), and presented to the household when they connect an
+   institution. **No line of this adapter's code sends these strings as a
+   request parameter** — there is no documented Basiq v3 API call where a
+   client passes CDR scope strings directly; they are dashboard
+   configuration that determines what the hosted Consent UI asks the
+   household to approve.
+
+`packages/providers/src/basiq/scopes.ts` now names both concepts
+separately and correctly:
 
 ```ts
-export const BASIQ_REQUESTED_DATA_CLUSTERS = ["accounts", "transactions"] as const;
+export const BASIQ_TOKEN_SCOPES = { SERVER: "SERVER_ACCESS", CLIENT: "CLIENT_ACCESS" } as const;
 
-export const BASIQ_REFUSED_DATA_CLUSTERS = [
-  "account_details",   // full/unmasked account number, BSB, detailed product terms
-  "identity",           // customer name, address, contact details, DOB
-  "payees",             // third-party payee names + BSB/account numbers
-  "regular_payments",   // scheduled payments / direct-debit authority metadata
-  "cards",               // card number/expiry/CVV-adjacent metadata
-  "payments",           // payment initiation / money movement
+export const BASIQ_CONSENT_POLICY_SCOPES = ["bank:accounts.basic:read", "bank:transactions:read"] as const;
+
+export const BASIQ_REFUSED_CONSENT_POLICY_SCOPES = [
+  "bank:accounts.detail:read",     // full/unmasked account number, BSB, detailed product terms
+  "common:customer.basic:read",     // customer name
+  "common:customer.detail:read",    // address, contact details, DOB
+  "bank:payees:read",               // third-party payee names + BSB/account numbers
+  "bank:regular_payments:read",     // scheduled payments / direct-debit authority metadata
+  "bank:products:read",             // detailed product/card feature metadata not needed for ingestion
 ] as const;
 ```
 
-`packages/providers/src/basiq/__tests__/scopes.test.ts` asserts the
-requested set is exactly `["accounts", "transactions"]`, that none of the
-refused clusters appear in it, and that every category the task named
-(unmasked account numbers/BSBs, customer identity, payees, scheduled
-payments, card details, payment initiation) is explicitly enumerated as
-refused rather than merely "not mentioned."
+`packages/providers/src/basiq/__tests__/scopes.test.ts` asserts: the two
+token scopes are distinct constants; the requested consent-policy scope
+set is exactly `["bank:accounts.basic:read", "bank:transactions:read"]`;
+none of the refused consent-policy scopes appear in it; and every category
+the task named (unmasked account numbers/BSBs, customer identity, payees,
+scheduled payments) is explicitly enumerated as refused rather than merely
+"not mentioned."
 
-Server-to-server calls authenticate with Basiq's `scope=SERVER_ACCESS`
-token type (Basiq's own full-server-access token, confirmed via its
-published docs — distinct from the narrower, browser-facing
-`CLIENT_ACCESS` token type, which this adapter never requests or holds).
-This is a fixed constant (`BASIQ_SERVER_TOKEN_SCOPE`), not a literal
-scattered through the codebase.
+**Server-to-server calls** (institutions, users, connections, accounts,
+transactions) authenticate with `SERVER_ACCESS` — full server-to-server
+access, obtained by exchanging `BASIQ_API_KEY` and cached in-memory only
+(see the token/credential table below).
+
+**The Consent UI launch** requires a separate, restricted, **user-bound**
+`CLIENT_ACCESS` token — `BasiqHttpClient.getClientAccessToken(basiqUserId)`
+obtains one. Unlike the SERVER token, it is deliberately **never cached or
+reused**: it's fetched fresh immediately before building a Consent UI URL
+and used for nothing else, so there's no benefit to holding onto it and a
+real cost (a longer-lived secret) to doing so. It is never exposed to the
+browser directly by this adapter — the resulting URL (built by
+`consentUi.ts`) is what a server-rendered redirect would send the
+browser to, not the token in isolation.
 
 **Unresolved (do not treat as confirmed):** the exact JSON field name(s)
-Basiq's consent-policy API uses for these cluster names, and whether
-"accounts" implicitly includes balance data or is itself sub-divided
-further. Confirm against `api.basiq.io/docs/consent` (blocked from this
-sandbox) before configuring a real consent policy.
+Basiq's Consent Policy dashboard configuration stores these scope strings
+under, and whether `bank:accounts.basic:read` implicitly includes balance
+data or is itself sub-divided further. Confirm against Basiq's live
+Consent Policy documentation (blocked from this sandbox) before
+configuring a real consent policy — see the setup checklist below.
+
+---
+
+## Hosted Consent UI (Task 7A.1 item 3 — construction only, never launched)
+
+Basiq's documented hosted Consent UI pattern is a browser redirect to:
+
+```
+https://consent.basiq.io/home?token=<user-bound CLIENT_ACCESS token>&state=<state>[&action=connect]
+```
+
+`packages/providers/src/basiq/consentUi.ts` exposes exactly two pure
+functions, neither of which fetches or navigates anywhere:
+
+- `generateConsentState()` — a cryptographically strong (32 random bytes,
+  base64url-encoded), single-use `state` value a caller generates and
+  stores server-side against the in-flight connection attempt, so the
+  eventual return/callback can be verified against it — CSRF/mix-up
+  protection for the redirect round-trip.
+- `buildConsentUiUrl({ clientToken, state, action? })` — builds the URL
+  string above. `action: "connect"` is Basiq's documented action for a
+  household that already has an active Basiq user/consent and is adding
+  **another** institution connection, rather than completing their first
+  consent (see the multi-institution model below). Omit it for a
+  household's first institution.
+
+Neither function ever logs, throws with, or otherwise surfaces the token
+value in an error message — proven by `consentUi.test.ts`. **This task
+does not launch the Consent UI or wire it into any route** — the builder
+exists so URL construction is correct and tested before that real wiring
+happens in a later, sandbox-connected task.
 
 ---
 
@@ -150,7 +219,8 @@ and nothing else survives the mapping call.
 | Credential | Type | Where stored | Encrypted? | Lifetime | Refresh | Revocation | What an attacker holding it could do |
 |---|---|---|---|---|---|---|---|
 | `BASIQ_API_KEY` | Basiq application credential (identifies FrodoCodo's own server to Basiq — not a household's bank credential) | Environment variable only (`process.env.BASIQ_API_KEY`, read once in `packages/providers/src/factory.ts`) | N/A — never a DB column, protected by standard platform env-var secrecy (Render) | Until manually rotated in the Basiq dashboard | Manual (dashboard) | Manual (dashboard) | Could create/query Basiq users and connections under FrodoCodo's own Basiq account. **Cannot move money or log into any bank** — Basiq's aggregation product has no payment-initiation capability to escalate into (§6 below), and CDR's own structural separation of read/payment-initiation capabilities (see `docs/banking-data-minimisation-audit.md` §8) means even a compromised aggregator-level credential doesn't cross into banking control. |
-| Basiq server-level access token (`scope=SERVER_ACCESS`) | Short-lived bearer token, exchanged from `BASIQ_API_KEY` | **In-memory only**, per process (`BasiqHttpClient`'s private `cachedToken` field) | N/A — deliberately never persisted at all, which is a stronger property than encrypting it (`docs/banking-data-minimisation-audit.md`'s "data never retained cannot later leak" principle, applied here specifically) | Basiq-reported `expires_in` (seconds) — **exact typical value unconfirmed from this sandbox**; treat as short (order of tens of minutes to an hour) until verified | Automatic — `BasiqHttpClient` re-exchanges the API key once the cached token is within 5 seconds of its reported expiry | N/A (nothing to revoke; simply stops being cached/used) | Same blast radius as the API key while valid, for a much shorter window; cheap to let expire naturally since it's re-derived from the API key on demand, never independently long-lived. |
+| Basiq server-level access token (`scope=SERVER_ACCESS`) | Short-lived bearer token, exchanged from `BASIQ_API_KEY` | **In-memory only**, per process (`BasiqHttpClient`'s private `cachedToken` field) | N/A — deliberately never persisted at all, which is a stronger property than encrypting it (`docs/banking-data-minimisation-audit.md`'s "data never retained cannot later leak" principle, applied here specifically) | Basiq-reported `expires_in` (seconds) — this adapter models it as ~3600s (`expires_in: 3600`, i.e. 60 minutes) per Basiq's documented convention for server tokens; **exact value must still be read from the live `/token` response, never hardcoded as a lifetime assumption** — the code always uses the server-reported `expires_in`, this figure is only the test fixture/expected default | Automatic — `BasiqHttpClient` re-exchanges the API key once the cached token is within 5 seconds of its reported expiry | N/A (nothing to revoke; simply stops being cached/used) | Same blast radius as the API key while valid, for a much shorter window; cheap to let expire naturally since it's re-derived from the API key on demand, never independently long-lived. |
+| Basiq user-bound client token (`scope=CLIENT_ACCESS`) | Restricted, user-bound bearer token, exchanged from `BASIQ_API_KEY` + a specific `basiqUserId` — used ONLY to build a Consent UI URL | **Never stored anywhere** — not cached in memory beyond the single call site that immediately builds a Consent UI URL from it, not written to any variable that outlives that call, never persisted | N/A — never retained | Basiq-reported `expires_in`, expected short (the token only needs to survive the one redirect) | Not refreshed — a stale one is simply discarded and a fresh one requested next time a Consent UI URL is needed | N/A (nothing to revoke; simply stops being used) | Could launch the Consent UI for one specific Basiq user — cannot call any management endpoint (accounts, transactions, connections) with it; Basiq's own documented restriction on this token type. |
 | A per-connection provider access/refresh token, **if** a real Basiq flow ever requires FrodoCodo to hold one | Provider-specific — Basiq's own architecture may keep bank-level session state entirely on Basiq's side, in which case this is never populated at all | `FinancialConnection.accessTokenEncrypted`/`refreshTokenEncrypted` (nullable `Json` columns, added this task) | **Yes** — AES-256-GCM envelope via `packages/db/src/payloadEncryption.ts` (renamed from `TRANSACTION_PAYLOAD_ENCRYPTION_KEY` to `APP_ENCRYPTION_KEY` this task, since it now protects more than transaction payloads), written/read only through `packages/db/src/connectionTokenStorage.ts` — no other code path may touch these columns directly | Whatever the provider reports, stored in `FinancialConnection.tokenExpiresAt` | Caller-driven (a future sync job would re-authenticate and call `storeConnectionTokens` again on refresh) — no refresh logic exists yet since nothing populates this today | `clearConnectionTokens` — called unconditionally by the disconnect action regardless of whether the provider-side revoke call succeeds (see below) | **Structurally cannot enable internet-banking login, payment initiation, or account modification** — see `docs/banking-data-minimisation-audit.md` §8's credential threat model, which this design implements exactly: a CDR-scoped token is read-only by protocol construction, not by this app's own promise. |
 | A household's real bank/Basiq login credential | — | **Nowhere. Must never exist in FrodoCodo at all.** | N/A | N/A | N/A | N/A | This row exists only to state that it must stay empty — if any future change ever causes FrodoCodo's own code to see this value, that is an immediate stop-ship defect, not something to merely mitigate (unchanged from `docs/banking-data-minimisation-audit.md`). |
 
@@ -220,11 +290,29 @@ adds such a method, this test fails immediately.
   instruction — matching stays exact-ID-based (or the documented
   pending→posted heuristic already in place before this task).
 - **`sinceDate`/`accountProviderIds` filtering**: attempted server-side via
-  a best-effort (unverified) Basiq filter query string, **and always
-  re-applied in-memory** regardless of whether the server-side filter
-  syntax turns out correct — this guarantees the filtering contract holds
-  even though the exact Basiq filter query grammar could not be confirmed
-  from this sandbox. Tested in `basiqProvider.test.ts`.
+  a best-effort Basiq filter query string built from Basiq's documented
+  filter field names for this endpoint (`connection.id`,
+  `transaction.postDate`) plus `limit=500` (Basiq's documented maximum page
+  size) — Task 7A.1 correction: scoping by `connection.id` (rather than no
+  connection scoping at all) keeps the request from pulling every
+  transaction the Basiq user has ever synced across every institution, not
+  just this one. **And always re-applied in-memory** regardless of whether
+  the server-side filter syntax turns out correct — this guarantees the
+  filtering contract holds even though the exact Basiq filter query
+  grammar could not be confirmed from this sandbox. Tested in
+  `basiqProvider.test.ts`.
+- **Malformed/untrusted response handling (Task 7A.1 item 8)**: Basiq's
+  responses are untrusted external input. `isValidBasiqAccount`/
+  `isValidBasiqTransaction` in `basiqProvider.ts` check the handful of
+  fields this adapter's mapping actually depends on (a non-empty `id`, a
+  numeric `amount` string, a non-empty `account`/`transactionDate`/
+  `description`) before mapping; an entry that fails validation is
+  **skipped**, not mapped into a garbage `ProviderAccount`/
+  `ProviderTransaction` (e.g. a `NaN` amount, or an empty ID breaking
+  downstream dedupe) and not thrown as a fatal error for the whole sync.
+  Tested in `basiqProvider.test.ts` with a malformed account (missing
+  `id`) and malformed transactions (non-numeric `amount`, missing
+  `account`).
 
 Existing transfer/reversal/refund/pending→posted reconciliation
 (`apps/worker/src/syncConnection.ts`'s `reconcileTransferReversalsAndRefunds`)
@@ -291,7 +379,7 @@ production.
 
 | Question | Finding | Confidence |
 |---|---|---|
-| Institution identifier | **Not hardcoded, by design.** `packages/providers/src/basiq/institutionMatch.ts` resolves CBA by matching `GET /institutions`'s live response against the name "Commonwealth Bank" — the same conclusion `docs/banking-data-minimisation-audit.md` already reached: Basiq's institution IDs are opaque and this environment could not confirm CBA's exact current value (a Basiq test institution ID, `AU00000`, was found via search, but nothing confirming CBA's real one). Querying live and matching by name is also simply more robust regardless of what could be verified here — aggregator IDs can change; the institution's name does not. | High confidence in the *design decision*; the actual ID remains unconfirmed and must come from a live `GET /institutions` call before real use. |
+| Institution identifier | **Not hardcoded, by design.** `packages/providers/src/basiq/institutionMatch.ts` resolves CBA by matching `GET /institutions`'s live response against an explicit, human-reviewed approved-name allow-list (`SUPPORTED_INSTITUTIONS.CBA` in `scopes.ts`) — the same conclusion `docs/banking-data-minimisation-audit.md` already reached: Basiq's institution IDs are opaque and this environment could not confirm CBA's exact current value (a Basiq test institution ID, `AU00000`, was found via search, but nothing confirming CBA's real one). **Task 7A.1 correction:** matching is now case-insensitive EXACT equality against the allow-list (not the original substring `.includes()` check, which risked a false-positive match against an unrelated institution whose name happened to contain the target text), and the matcher throws — refusing to guess — if more than one live institution matches the same allow-list, rather than silently picking the first (`.find()`) result. Zero matches returns `null`, which is acceptable pre-live state. Querying live and matching by name is also simply more robust regardless of what could be verified here — aggregator IDs can change; the institution's name does not. | High confidence in the *design decision*; the actual ID remains unconfirmed and must come from a live `GET /institutions` call before real use. |
 | CDR data holder status | **CDR data holder today** — confirmed in `docs/banking-data-minimisation-audit.md` (major bank, mandatory CDR participant since the original banking-sector rollout); not re-litigated this task. | High |
 | Account type coverage | The target product is CBA's everyday/transaction account. Basiq's account `class.type` field is expected to report something transaction-account-shaped, mapped to FrodoCodo's `TRANSACTION` enum value by `mapAccountType`'s keyword match — **exact Basiq class value for a CBA transaction account is unconfirmed** from this sandbox. | Low-medium on the exact class string; functionally inconsequential either way (see the accountType note below). |
 | Institution-specific caveat | None found beyond the general CDR-institution behavior already documented. | — |
@@ -313,26 +401,45 @@ production.
    this adapter's design (live name-matching, never hardcoded), but the
    actual IDs returned by a real `GET /institutions` call have never been
    seen from this environment.
-2. **Exact Basiq consent-policy JSON field names/values** for the
-   `accounts`/`transactions` data clusters — corroborated at the concept
-   level, not at the wire-format level.
+2. **Exact Basiq Consent Policy dashboard field names/values** for
+   configuring `bank:accounts.basic:read`/`bank:transactions:read` —
+   corroborated at the concept level (Task 7A.1 confirmed these are real
+   CDR-namespaced scope strings, distinct from the API token scope), not
+   at the exact dashboard-configuration wire-format level.
 3. **Exact Basiq API endpoint paths and payload shapes** used throughout
    `basiqProvider.ts` (`/users`, `/users/{id}/connections`,
    `/users/{id}/accounts`, `/users/{id}/transactions`, the `/token`
    exchange) — modeled on Basiq's documented conventions, not verified
-   character-for-character against the live API reference.
-4. **Server-level token lifetime (`expires_in`)** — assumed short-lived;
-   exact typical value unconfirmed.
-5. **The hosted Consent-UI redirect URL** `initiateConnection` would need
-   to return — deliberately left unimplemented (`redirectUrl` omitted)
-   rather than guessed.
-6. **Multi-institution household flow**: `initiateConnection` always
-   creates a fresh Basiq user. A household connecting a *second*
-   institution (e.g. Virgin after already connecting CBA) should reuse the
-   first connection's Basiq user rather than create a second one — this
-   requires a connection-initiation flow with household context that
-   doesn't exist yet (packages/providers must stay database-free, so this
-   can't be resolved inside the adapter itself). Not built this task.
+   character-for-character against the live API reference. This includes
+   the exact filter query grammar `/users/{id}/transactions` accepts
+   (Task 7A.1 aligned the field names used — `connection.id`,
+   `transaction.postDate` — to Basiq's documented filter fields, but the
+   precise syntax remains unverified; the in-memory filter is the real
+   correctness guarantee regardless).
+4. **Server-level token lifetime (`expires_in`)** — this adapter always
+   uses whatever value Basiq's `/token` response reports, never a
+   hardcoded assumption; Basiq's documented convention is understood to be
+   ~60 minutes for both SERVER_ACCESS and CLIENT_ACCESS tokens, but the
+   exact live value is unconfirmed from this sandbox.
+5. **The hosted Consent-UI redirect flow end-to-end** — Task 7A.1 added
+   `consentUi.ts`'s URL builder (`https://consent.basiq.io/home?token=...`)
+   as a tested, pure construction function, but it has never been launched
+   against a real browser or wired into any route; `initiateConnection`
+   still omits `redirectUrl` rather than guessing how a real caller should
+   sequence "get CLIENT_ACCESS token → build Consent UI URL → redirect →
+   handle the `state`-verified return."
+6. **Multi-institution household flow — now supported at the adapter
+   level, not yet wired into a real caller.** Task 7A.1 added an optional
+   `existingProviderUserId` parameter to `initiateConnection` (skips
+   `POST /users` and creates the new connection directly under the
+   existing Basiq user) and an exported `getBasiqUserIdFromConnectionId`
+   helper so a caller with household/database context (which
+   `packages/providers` deliberately never has — see CLAUDE.md) can decode
+   an existing active Basiq connection's user ID and pass it through when
+   connecting a household's second institution. **No real connect-flow UI
+   exists in `apps/web` yet** (only `disconnectInstitution` does) — this
+   capability is ready for that future caller, not yet exercised outside
+   unit tests.
 7. **Basiq's exact account-class taxonomy** for distinguishing
    TRANSACTION from SAVINGS accounts — Basiq is understood to sometimes
    report a combined class for both; `packages/providers/src/basiq/basiqProvider.ts`'s
@@ -350,3 +457,50 @@ guessed past — each is either resolved by a design choice that doesn't
 depend on the unconfirmed detail (name-matching instead of a hardcoded
 ID; in-memory-only server token instead of guessing its exact lifetime) or
 explicitly listed here as a pre-live confirmation step.
+
+---
+
+## Human Basiq-dashboard setup checklist (Task 7A.1 item 10)
+
+Everything above is code that exists and is tested today. The following
+items genuinely require a human with access to a real Basiq
+account/dashboard and cannot be completed from this codebase or this
+sandbox — they are listed here as an exact checklist so a future session
+knows precisely what's left, without being asked to start any of it now:
+
+1. **Register/create the Basiq application** in the Basiq dashboard (or
+   confirm an existing one) and obtain its **API key**
+   (`BASIQ_API_KEY`) — a server-side secret, never committed, set only as
+   a Render environment variable per `docs/security-privacy.md`.
+2. **Enable Open Banking/CDR access** for that application, if it is not
+   enabled by default on account creation — the specific toggle/plan tier
+   this requires is a Basiq account-management detail, not visible from
+   this sandbox.
+3. **Configure the application's Consent Policy** to request exactly
+   `bank:accounts.basic:read` and `bank:transactions:read`
+   (`BASIQ_CONSENT_POLICY_SCOPES` in `scopes.ts`) — and confirm none of
+   `BASIQ_REFUSED_CONSENT_POLICY_SCOPES` are enabled.
+4. **Select/enable CBA and Virgin Money** (and only those two) as
+   connectable institutions for the application, if Basiq requires
+   explicit per-institution enablement rather than exposing every CDR data
+   holder by default.
+5. **Configure the Consent UI redirect/return URL(s)** the household's
+   browser lands on after completing (or cancelling) consent — this is
+   what a real `state`-verified callback route in `apps/web` would need to
+   exist at, and doesn't yet.
+6. **Confirm production-access / commercial-onboarding requirements** —
+   whether Basiq's sandbox/test environment is sufficient for a genuine
+   single-household deployment like FrodoCodo's, or whether a commercial
+   agreement/accreditation step is required before real CDR consent can be
+   requested from a real household.
+7. Once 1–6 are done: perform a **live, sandboxed** (never production
+   household data on the first pass) call to `GET /institutions` to
+   finally confirm CBA's and Virgin Money's real institution IDs, and a
+   live `/token` exchange to confirm the actual `expires_in` value for
+   both SERVER_ACCESS and CLIENT_ACCESS tokens — closing unresolved items
+   1 and 4 above.
+
+Nothing in this checklist was started, simulated, or worked around in this
+task — it is presented as the precise boundary between "code-completable"
+and "requires the real Basiq dashboard," per Task 7A.1's explicit
+instruction not to ask the user to perform these yet.

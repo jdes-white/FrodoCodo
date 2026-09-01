@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { toIngestibleAccountFields, toIngestibleTransactionFields } from "@frodocodo/ledger";
-import { BasiqProvider } from "../basiqProvider.js";
+import { BasiqProvider, getBasiqUserIdFromConnectionId } from "../basiqProvider.js";
 import { BasiqHttpClient, type FetchLike } from "../httpClient.js";
 
 function jsonResponse(body: unknown, ok = true, status = 200) {
@@ -205,6 +205,89 @@ describe("BasiqProvider (Task 7A) — every call goes through an injected mock, 
     // providerTransactionId + account -- this proves the adapter itself
     // produces a stable, re-matchable key across two independent syncs of
     // the same underlying data, which is the precondition dedupe relies on.
+  });
+
+  it("initiateConnection creates a fresh Basiq user when no existingProviderUserId is given", async () => {
+    const fetch = fakeBasiqBackend([
+      TOKEN_RESPONSE,
+      jsonResponse({ id: "new-user-1" }), // POST /users
+      jsonResponse({ id: "conn-1" }), // POST /users/new-user-1/connections
+    ]);
+    const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fetch));
+    const result = await provider.initiateConnection("inst-cba");
+
+    expect(result.providerConnectionId).toBe("basiq::new-user-1::conn-1");
+    const userCreateCall = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]!;
+    expect(userCreateCall[0]).toContain("/users");
+  });
+
+  it("initiateConnection reuses an existing Basiq user for a household's second institution (Task 7A.1 item 4)", async () => {
+    const fetch = fakeBasiqBackend([
+      TOKEN_RESPONSE,
+      jsonResponse({ id: "conn-2" }), // POST /users/existing-user-1/connections — no /users POST at all
+    ]);
+    const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fetch));
+    const result = await provider.initiateConnection("inst-virgin", "existing-user-1");
+
+    expect(result.providerConnectionId).toBe("basiq::existing-user-1::conn-2");
+    // Exactly two calls total: the /token exchange and the connection POST — no user creation.
+    expect((fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls).toHaveLength(2);
+    const connectionCall = (fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[1]!;
+    expect(connectionCall[0]).toContain("/users/existing-user-1/connections");
+  });
+
+  it("getBasiqUserIdFromConnectionId decodes an existing Basiq connection ID for reuse", () => {
+    expect(getBasiqUserIdFromConnectionId("basiq::user-42::conn-7")).toBe("user-42");
+  });
+
+  it("getBasiqUserIdFromConnectionId returns null for a non-Basiq (e.g. mock provider) connection ID rather than throwing", () => {
+    expect(getBasiqUserIdFromConnectionId("mock::cba::1")).toBeNull();
+  });
+
+  it("skips a malformed account (missing id) rather than mapping garbage into ProviderAccount (Task 7A.1 item 8)", async () => {
+    const fetch = fakeBasiqBackend([
+      TOKEN_RESPONSE,
+      jsonResponse({
+        data: [
+          { id: "acc-good", type: "account", attributes: { name: "OK", class: { type: "transaction" }, currency: "AUD" } },
+          { type: "account", attributes: { name: "Missing ID" } }, // no `id` — must be dropped, not crash
+        ],
+      }),
+    ]);
+    const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fetch));
+    const accounts = await provider.discoverAccounts("basiq::user-1::conn-1");
+
+    expect(accounts.map((a) => a.providerAccountId)).toEqual(["acc-good"]);
+  });
+
+  it("skips a malformed transaction (missing amount) rather than producing a NaN amount (Task 7A.1 item 8)", async () => {
+    const fetch = fakeBasiqBackend([
+      TOKEN_RESPONSE,
+      jsonResponse({
+        data: [
+          {
+            id: "tx-good",
+            type: "transaction",
+            attributes: { status: "posted", description: "OK", amount: "-10.00", account: "acc-1", transactionDate: "2026-08-01" },
+          },
+          {
+            id: "tx-bad-amount",
+            type: "transaction",
+            attributes: { status: "posted", description: "BAD", amount: "not-a-number", account: "acc-1", transactionDate: "2026-08-01" },
+          },
+          {
+            // missing attributes.account entirely
+            id: "tx-bad-account",
+            type: "transaction",
+            attributes: { status: "posted", description: "BAD", amount: "-5.00", transactionDate: "2026-08-01" },
+          },
+        ],
+      }),
+    ]);
+    const provider = new BasiqProvider(new BasiqHttpClient("mock-key", fetch));
+    const result = await provider.syncTransactions("basiq::user-1::conn-1", {});
+
+    expect(result.transactions.map((t) => t.providerTransactionId)).toEqual(["tx-good"]);
   });
 
   it("disconnectConnection calls Basiq's revoke endpoint for the encoded user/connection", async () => {

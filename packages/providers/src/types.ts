@@ -106,7 +106,19 @@ export interface FinancialDataProvider {
   readonly id: string;
 
   listSupportedInstitutions(): Promise<ProviderInstitution[]>;
-  initiateConnection(institutionId: string): Promise<InitiateConnectionResult>;
+  /**
+   * `existingProviderUserId` lets a caller connect a SECOND (or later)
+   * institution to a household's existing provider-level user identity
+   * instead of creating a new one — the real-world model for a household
+   * connecting both CBA and Virgin Money through the same Basiq user (see
+   * docs/basiq-integration.md's multi-institution household model).
+   * MockProvider accepts and ignores this parameter since it has no
+   * provider-level user concept of its own. Callers resolve this value
+   * (e.g. by decoding an existing active connection's providerConnectionId)
+   * — `packages/providers` itself has no household/database context to
+   * look it up (CLAUDE.md: these packages never import `@frodocodo/db`).
+   */
+  initiateConnection(institutionId: string, existingProviderUserId?: string): Promise<InitiateConnectionResult>;
   getConsentStatus(providerConnectionId: string): Promise<ConsentInfo>;
   discoverAccounts(providerConnectionId: string): Promise<ProviderAccount[]>;
   syncTransactions(

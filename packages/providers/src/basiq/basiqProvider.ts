@@ -22,8 +22,8 @@ import type {
  *
  * Every method here is READ-ONLY by construction: this class has no
  * method for payments, transfers, payee creation, account modification, or
- * card operations, and never will — see
- * packages/providers/src/basiq/__tests__/basiqProvider.readOnly.test.ts,
+ * card operations, and never will — see the "read-only method surface"
+ * test in packages/providers/src/basiq/__tests__/basiqProvider.test.ts,
  * which asserts the class's own method surface never grows beyond
  * `FinancialDataProvider`.
  *
@@ -54,34 +54,34 @@ export class BasiqProvider implements FinancialDataProvider {
   }
 
   /**
-   * Creates a Basiq user + connection and returns an encoded
-   * providerConnectionId (`basiq::<basiqUserId>::<basiqConnectionId>`),
-   * mirroring MockProvider's own encoding convention so every later call
+   * Creates (or reuses) a Basiq user, creates a connection under it, and
+   * returns an encoded providerConnectionId
+   * (`basiq::<basiqUserId>::<basiqConnectionId>`), mirroring MockProvider's
+   * own encoding convention so every later call
    * (getConsentStatus/discoverAccounts/syncTransactions/disconnectConnection)
    * can recover both IDs from the one string this interface passes around.
    *
-   * KNOWN PRE-LIVE GAP (see docs/basiq-integration.md): this always
-   * creates a fresh Basiq user. A household connecting a SECOND
-   * institution (e.g. Virgin after CBA) should reuse the first
-   * connection's Basiq user rather than create a second one — this
-   * interface method has no household context to look that up itself
-   * (packages/providers must never import @frodocodo/db — see CLAUDE.md).
-   * A real connection-initiation flow must resolve and pass an existing
-   * user reference before this is used for a household's second
-   * institution; not built here.
+   * Task 7A.1 correction (item 4): a household connecting a SECOND
+   * institution (e.g. Virgin after CBA) must reuse the FIRST connection's
+   * Basiq user rather than create a second one — Basiq's model is one user
+   * per end customer, with multiple institution connections underneath.
+   * `existingProviderUserId` is how a caller (which does have household
+   * context — see `getBasiqUserIdFromConnectionId` below) supplies that
+   * reuse; when present, this method skips `POST /users` entirely and
+   * creates the connection directly under the existing user.
    *
-   * `redirectUrl` is intentionally omitted: the exact hosted Consent-UI
-   * URL Basiq expects a browser to be sent to could not be confirmed
-   * against live documentation from this environment — see
-   * docs/basiq-integration.md's unresolved items. Never guess a URL a
-   * real household would be redirected to.
+   * `redirectUrl` is intentionally omitted: this method itself never
+   * launches or links to the Consent UI (see `consentUi.ts` — building
+   * that URL requires a CLIENT_ACCESS token, obtained separately, and is
+   * deliberately not wired into this call). Never guess a URL a real
+   * household would be redirected to.
    */
-  async initiateConnection(institutionId: string): Promise<InitiateConnectionResult> {
-    const user = await this.http.post<{ id: string }>("/users", {});
-    const connection = await this.http.post<{ id: string }>(`/users/${user.id}/connections`, {
+  async initiateConnection(institutionId: string, existingProviderUserId?: string): Promise<InitiateConnectionResult> {
+    const basiqUserId = existingProviderUserId ?? (await this.http.post<{ id: string }>("/users", {})).id;
+    const connection = await this.http.post<{ id: string }>(`/users/${basiqUserId}/connections`, {
       institution: { id: institutionId },
     });
-    return { providerConnectionId: encodeProviderConnectionId(user.id, connection.id) };
+    return { providerConnectionId: encodeProviderConnectionId(basiqUserId, connection.id) };
   }
 
   async getConsentStatus(providerConnectionId: string): Promise<ConsentInfo> {
@@ -100,27 +100,35 @@ export class BasiqProvider implements FinancialDataProvider {
   async discoverAccounts(providerConnectionId: string): Promise<ProviderAccount[]> {
     const { basiqUserId } = decodeProviderConnectionId(providerConnectionId);
     const accounts = await this.http.getAllPages<BasiqAccount>(`/users/${basiqUserId}/accounts`);
-    return accounts.map(mapBasiqAccount);
+    return accounts.filter(isValidBasiqAccount).map(mapBasiqAccount);
   }
 
   async syncTransactions(
     providerConnectionId: string,
     options: { sinceDate?: string; accountProviderIds?: string[] },
   ): Promise<ProviderSyncResult> {
-    const { basiqUserId } = decodeProviderConnectionId(providerConnectionId);
+    const { basiqUserId, basiqConnectionId } = decodeProviderConnectionId(providerConnectionId);
 
-    // Best-effort server-side filter (exact Basiq filter query syntax
-    // unverified — see docs/basiq-integration.md). The in-memory filter
-    // below guarantees the contract regardless of whether this filter
-    // string is honoured server-side.
-    const filters: string[] = [];
-    if (options.sinceDate) filters.push(`transaction.postDate.gte:${options.sinceDate}`);
-    const query = filters.length > 0 ? `?filter=${encodeURIComponent(filters.join(","))}` : "";
+    // Best-effort server-side filter using Basiq's documented filter field
+    // names for this endpoint (`connection.id`, `account.id`,
+    // `transaction.postDate` — see docs/basiq-integration.md's unresolved
+    // wire-format items for exactly which of these Basiq's filter grammar
+    // actually accepts on `/users/{userId}/transactions`, since that could
+    // not be confirmed from this environment). Scoping to this
+    // connection's ID keeps the request from pulling every transaction the
+    // Basiq user has ever synced, including from other institutions.
+    // `limit=500` matches Basiq's documented maximum page size. The
+    // in-memory filters below are the actual correctness guarantee
+    // regardless of whether any of this is honoured server-side.
+    const filters: string[] = [`connection.id.eq('${basiqConnectionId}')`];
+    if (options.sinceDate) filters.push(`transaction.postDate.gte('${options.sinceDate}')`);
+    const query = `?limit=500&filter=${encodeURIComponent(filters.join(","))}`;
 
     const rawTransactions = await this.http.getAllPages<BasiqTransaction>(`/users/${basiqUserId}/transactions${query}`);
 
     const accountFilter = options.accountProviderIds ? new Set(options.accountProviderIds) : null;
     const transactions = rawTransactions
+      .filter(isValidBasiqTransaction)
       .filter((t) => !accountFilter || accountFilter.has(t.attributes.account))
       .filter((t) => !options.sinceDate || (t.attributes.postDate ?? t.attributes.transactionDate) >= options.sinceDate)
       .map(mapBasiqTransaction);
@@ -149,6 +157,25 @@ function decodeProviderConnectionId(providerConnectionId: string): { basiqUserId
   return { basiqUserId: parts[1]!, basiqConnectionId: parts[2]! };
 }
 
+/**
+ * Extracts the Basiq user ID from an existing Basiq providerConnectionId,
+ * for a caller (e.g. apps/web's connection-initiation flow) that wants to
+ * connect a household's SECOND institution under the SAME Basiq user
+ * rather than creating a new one (see `initiateConnection`'s
+ * `existingProviderUserId` parameter above). Returns `null` for a
+ * providerConnectionId that isn't a recognized Basiq encoding (e.g. a mock
+ * connection ID) instead of throwing — callers are expected to look this
+ * up across a household's existing connections and simply skip any that
+ * aren't Basiq's.
+ */
+export function getBasiqUserIdFromConnectionId(providerConnectionId: string): string | null {
+  try {
+    return decodeProviderConnectionId(providerConnectionId).basiqUserId;
+  } catch {
+    return null;
+  }
+}
+
 function mapConnectionStatus(status: string | undefined): ConsentInfo["status"] {
   switch (status) {
     case "active":
@@ -163,6 +190,35 @@ function mapConnectionStatus(status: string | undefined): ConsentInfo["status"] 
     default:
       return "PENDING";
   }
+}
+
+/**
+ * Task 7A.1 item 8: Basiq's responses are untrusted external input and
+ * must be validated at this adapter boundary before normalization —
+ * malformed or missing-required-field entries must be skipped (fail safe)
+ * rather than silently produce a garbage `ProviderAccount`/`ProviderTransaction`
+ * (e.g. a `NaN` amount from `toMoney(undefined)`, or an empty `id` breaking
+ * downstream dedup). Only the fields this adapter actually depends on for
+ * a correct mapping are checked — the exact optional/required shape of
+ * every other field remains unverified (see types.ts's doc comment and
+ * docs/basiq-integration.md's unresolved wire-format items).
+ */
+function isValidBasiqAccount(account: BasiqAccount): boolean {
+  return typeof account?.id === "string" && account.id.length > 0;
+}
+
+function isValidBasiqTransaction(transaction: BasiqTransaction): boolean {
+  return (
+    typeof transaction?.id === "string" &&
+    transaction.id.length > 0 &&
+    typeof transaction.attributes?.account === "string" &&
+    transaction.attributes.account.length > 0 &&
+    typeof transaction.attributes.amount === "string" &&
+    /^-?\d+(\.\d+)?$/.test(transaction.attributes.amount.trim()) &&
+    typeof transaction.attributes.transactionDate === "string" &&
+    transaction.attributes.transactionDate.length > 0 &&
+    typeof transaction.attributes.description === "string"
+  );
 }
 
 /**

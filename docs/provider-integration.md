@@ -7,15 +7,16 @@
 
 - `MockProvider` — deterministic synthetic data shaped like the three
   target products, used for all demo/dev/test purposes.
-- `BasiqProvider` (Task 7A, `packages/providers/src/basiq/`) — a real
-  adapter for **CBA and Virgin Money only** (Amex remains out of scope —
-  see below). **Implemented but never connected**: no real Basiq API key
-  has ever been used, no real Basiq user created, no real CDR consent
-  requested, no real account connected. See
-  `docs/basiq-integration.md` for the full architecture, the exact
-  consent/scope boundary, the token security design, and every item that
-  could not be verified against live Basiq documentation from the
-  environment this was built in.
+- `BasiqProvider` (Task 7A, corrected in Task 7A.1,
+  `packages/providers/src/basiq/`) — a real adapter for **CBA and Virgin
+  Money only** (Amex remains out of scope — see below). **Implemented but
+  never connected**: no real Basiq API key has ever been used, no real
+  Basiq user created, no real CDR consent requested, no real account
+  connected. See `docs/basiq-integration.md` for the full architecture,
+  the corrected API-token-scope-vs-CDR-consent-scope model, the Consent UI
+  URL builder, the multi-institution household model, the token security
+  design, and every item that could not be verified against live Basiq
+  documentation from the environment this was built in.
 
 Connecting a REAL account for the first time is still a deliberate,
 owner-present decision (see `docs/product-decisions.md`) — the interface

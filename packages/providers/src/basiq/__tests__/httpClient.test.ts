@@ -82,6 +82,39 @@ describe("BasiqHttpClient (Task 7A) — never contacts the real Basiq API in tes
     expect(await client.getAllPages("/transactions")).toEqual([]);
   });
 
+  it("getClientAccessToken requests a CLIENT_ACCESS token bound to the given user, separate from the SERVER token flow", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ access_token: "client-token-abc", token_type: "Bearer", expires_in: 900 }));
+
+    const client = new BasiqHttpClient("mock-api-key-not-real", fetchMock as unknown as FetchLike);
+    const result = await client.getClientAccessToken("basiq-user-1");
+
+    expect(result.token).toBe("client-token-abc");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0]!;
+    expect(call[1].body).toContain("CLIENT_ACCESS");
+    expect(call[1].body).toContain("basiq-user-1");
+  });
+
+  it("getClientAccessToken is never cached or reused — a second call always fetches a fresh token", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ access_token: "client-token-1", token_type: "Bearer", expires_in: 900 }))
+      .mockResolvedValueOnce(jsonResponse({ access_token: "client-token-2", token_type: "Bearer", expires_in: 900 }));
+
+    const client = new BasiqHttpClient("mock-api-key-not-real", fetchMock as unknown as FetchLike);
+    const first = await client.getClientAccessToken("basiq-user-1");
+    const second = await client.getClientAccessToken("basiq-user-1");
+
+    expect(first.token).toBe("client-token-1");
+    expect(second.token).toBe("client-token-2");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("getClientAccessToken requires a non-empty basiqUserId", async () => {
+    const client = new BasiqHttpClient("mock-api-key-not-real", vi.fn() as unknown as FetchLike);
+    await expect(client.getClientAccessToken("")).rejects.toThrow(/basiqUserId/);
+  });
+
   it("throws (never silently swallows) a non-ok response, without leaking the API key or full URL/query into the message", async () => {
     const fetchMock = vi
       .fn()
