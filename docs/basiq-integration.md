@@ -239,10 +239,126 @@ the household completes or cancels consent (still not built — see
 unresolved item 5 below).
 
 Neither function ever logs, throws with, or otherwise surfaces the token
-value in an error message — proven by `consentUi.test.ts`. **This task
-does not launch the Consent UI or wire it into any route** — the builder
-exists so URL construction is correct and tested before that real wiring
-happens in a later, sandbox-connected task.
+value in an error message — proven by `consentUi.test.ts`. Task 7A.1/7A.2
+deliberately stopped here — construction only, never launched. **Task 7C
+(below) is what actually wires this into a real, redirect-and-return
+flow**, the first time any of it has run inside the application rather
+than only inside a test.
+
+---
+
+## Live-connection flow (Task 7C)
+
+**Status: implemented and tested up to the boundary a live Basiq API key
+draws.** `apps/web` now has a real, minimal connect flow — the first code
+in this repository that would actually create a live Basiq user/connection
+and redirect a household's browser to Basiq's hosted Consent UI, if
+pointed at a real `BASIQ_API_KEY`. It has never been run against a real
+key; every test exercises it against `MockProvider` or an injected fake
+Basiq HTTP client, exactly like every other Basiq test in this repo.
+
+### The flow
+
+1. **Choose an institution** — `apps/web/app/(app)/settings/page.tsx`'s
+   "Connect an institution" section lists `listSupportedInstitutions()`'s
+   result, filtered down to institutions the household doesn't already
+   have an active connection for. Admin-only (§5/§11), same gating as
+   disconnect.
+2. **Initiate/reuse the Basiq user** — `connectInstitution`
+   (`apps/web/app/(app)/settings/actions.ts`) calls
+   `findExistingBasiqUserId` (`apps/web/lib/basiqConnect.ts`), which scans
+   the household's existing Basiq connections and decodes the first one's
+   Basiq user ID (`getBasiqUserIdFromConnectionId`) — implementing the
+   multi-institution model Task 7A.1/7B left as "supported at the adapter
+   level, not yet wired into a real caller." A household connecting a
+   SECOND institution now genuinely reuses the first connection's Basiq
+   user; `action=connect` is passed to the Consent UI in that case, per
+   Basiq's documented convention.
+3. **Obtain the transient CLIENT_ACCESS token** —
+   `beginBasiqConsent(basiqUserId, options)` (new,
+   `packages/providers/src/factory.ts`) calls
+   `BasiqHttpClient.getClientAccessToken`. Never cached, never persisted,
+   never logged — same guarantee as before, now actually exercised by a
+   real call site instead of only by its own unit test.
+4. **Construct and redirect to Basiq's Consent UI** —
+   `beginBasiqConsent` also calls `buildConsentUiUrl`/`generateConsentState`
+   and returns `{ url, state }`; `connectInstitution` signs `{
+   connectionId, state }` into a short-lived (10 minute), httpOnly,
+   `sameSite: lax` cookie (`apps/web/lib/basiqConnectState.ts`, scoped to
+   path `/api/basiq` — never the session cookie) and redirects the
+   browser to `url`.
+5. **Safely handle the return/state** —
+   `apps/web/app/api/basiq/callback/route.ts` reads the returned `state`
+   query parameter, verifies it against the signed cookie
+   (`verifyConnectState`), and — critically — **never trusts any other
+   query parameter Basiq's redirect might carry as a signal of
+   success/failure**, because Basiq's public documentation doesn't specify
+   a machine-trustable one. Instead it independently calls
+   `provider.getConsentStatus(...)` against Basiq itself and only proceeds
+   if that reports `ACTIVE`. The connection lookup is household-scoped
+   (`householdId: session.householdId`), so a guessed/replayed connection
+   ID can never complete another household's pending connection.
+6. **Establish/save the resulting `FinancialConnection`** — the
+   `FinancialConnection` row is actually created in step 2 (as `PENDING`,
+   `isActive: false`), before any redirect — so a household that abandons
+   the Consent UI leaves a harmless `PENDING` row behind, not an orphaned
+   in-flight state with nothing to look up on return. The callback route
+   updates it to `ACTIVE`/`isActive: true` only after `getConsentStatus`
+   confirms it.
+7. **Run the existing account/transaction sync** —
+   `completeConnectionSync` (`basiqConnect.ts`) calls
+   `establishAccountsForConnection` (new: creates `Account` rows from
+   `discoverAccounts()`, through the exact same
+   `deriveDefaultAccountAlias`/`toIngestibleAccountFields` allow-list
+   `packages/db/src/seedHousehold.ts` already uses — never a provider
+   nickname/balance/account-number) and then calls **the real
+   `syncConnection`** — `apps/worker/src/syncConnection.ts`'s own
+   function, now exported (`apps/worker/package.json`'s `main`/`exports`)
+   and imported by `apps/web` (`@frodocodo/worker` dependency,
+   `next.config.ts`'s `transpilePackages`). This is a deliberate choice:
+   the household's first sync and every scheduled sync after it run
+   through **identical** dedupe/classify/reconcile logic, not two
+   independently-maintained copies of it.
+8. **Return with a clear success/failure state** — both the immediate
+   (MockProvider) and the redirect-and-return (Basiq) paths end at
+   `/settings?connected=success` or `?connected=error`, rendered as a
+   banner at the top of the Settings page.
+
+### The email identifier decision (Task 7B item 11, now resolved)
+
+Per Task 7B's explicit flag-for-decision: `newUserContact.email` is the
+**connecting admin's existing FrodoCodo login email** (`User.email`,
+already collected for authentication) — no mobile number, first/last
+name, DOB, address, or any other identity field is ever sent. This is the
+minimum-new-data option Task 7B identified: FrodoCodo sends Basiq an
+identifier it already holds and already uses for account correlation,
+rather than collecting anything new solely to satisfy Basiq's user-creation
+contract. It is **not** additionally persisted anywhere — not on
+`FinancialConnection`, not on `Account`, not in `AuditEvent` metadata
+(the audit event for `INITIATE_CONNECTION` records only the institution
+and whether an existing Basiq user was reused, never the email) — it
+exists only in the one outbound `POST /users` request body
+(`packages/providers/src/basiq/basiqProvider.ts`'s `initiateConnection`).
+
+### What remains genuinely environment-dependent
+
+Everything above is real, tested code. **The one thing that cannot be
+exercised from this environment, and was not simulated as if it had been,
+is a live round-trip through Basiq itself**: obtaining a real
+`CLIENT_ACCESS` token from `api.basiq.io`, a real household completing
+consent in a real browser on `consent.basiq.io`, and Basiq's real redirect
+back to `/api/basiq/callback`. `beginBasiqConsent`, the callback route's
+state verification, and `completeConnectionSync` are each tested
+individually (against MockProvider or an injected fake Basiq HTTP client)
+and are wired together correctly by inspection and by the passing
+MockProvider end-to-end Playwright test
+(`apps/web/e2e/connect-institution.spec.ts`) — but the literal sequence of
+"browser hits our redirect → lands on Basiq's real page → household clicks
+Allow → Basiq redirects back" has never executed. See the Human
+Basiq-dashboard setup checklist below for what a human needs to do before
+that first real attempt is even possible (a registered redirect URL being
+the item this flow's existence now makes concrete: `https://<app
+host>/api/basiq/callback`).
 
 ---
 
@@ -599,25 +715,25 @@ was worked around, assumed favorably, or silently guessed past.
    object, since the search-indexed documentation available to this pass
    didn't quote every field name directly.
 4. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — the hosted Consent-UI
-   redirect flow end-to-end.** `consentUi.ts`'s URL builder
+   redirect flow end-to-end.** Task 7C wired `consentUi.ts`'s URL builder
    (`https://consent.basiq.io/home?token=...&action=...&state=...`,
-   including the now-added `institutionId`) is VERIFIED AGAINST CURRENT
-   OFFICIAL BASIQ DOCUMENTATION as a construction function, but it has
-   never been launched against a real browser or wired into any route;
-   `initiateConnection` still omits `redirectUrl` rather than guessing how
-   a real caller should sequence "get CLIENT_ACCESS token → build Consent
-   UI URL → redirect → handle the `state`-verified return."
-5. **Multi-institution household flow — supported at the adapter level
-   (VERIFIED design, not sandbox-dependent), not yet wired into a real
-   caller.** `initiateConnection`'s optional `existingProviderUserId`
-   parameter (skips `POST /users` and creates the new connection directly
-   under the existing Basiq user) and the exported
-   `getBasiqUserIdFromConnectionId` helper let a caller with
-   household/database context (which `packages/providers` deliberately
-   never has — see CLAUDE.md) reuse a household's existing Basiq user for
-   a second institution. **No real connect-flow UI exists in `apps/web`
-   yet** (only `disconnectInstitution` does) — this capability is ready
-   for that future caller, not yet exercised outside unit tests.
+   including `institutionId`) into a real redirect-and-return flow
+   (`connectInstitution` → `/api/basiq/callback` — see "Live-connection
+   flow" above) — the code path is complete and tested against
+   MockProvider/injected fakes, but it has never executed against a real
+   `api.basiq.io`/`consent.basiq.io` round trip. That first real attempt
+   is the one thing left genuinely environment-dependent.
+5. **Multi-institution household flow — now wired into a real caller
+   (Task 7C).** `findExistingBasiqUserId` (`apps/web/lib/basiqConnect.ts`)
+   resolves a household's existing Basiq user via
+   `getBasiqUserIdFromConnectionId` and `connectInstitution` passes it
+   through to `initiateConnection` as `existingProviderUserId`, with
+   `action: "connect"` on the Consent UI redirect. Exercised by
+   `apps/web/e2e/connect-institution.spec.ts` against MockProvider (which
+   has no user-reuse concept of its own, so this specific branch's
+   behavior is proven by the underlying `basiqProvider.test.ts` unit tests
+   instead, run against an injected fake Basiq backend) — a real Basiq
+   second-institution connection remains otherwise unexecuted.
 6. **REQUIRES AUTHENTICATED SANDBOX VERIFICATION — Basiq's exact
    account-class taxonomy** for distinguishing TRANSACTION from SAVINGS
    accounts — Basiq is understood to sometimes report a combined class for
@@ -662,9 +778,11 @@ knows precisely what's left, without being asked to start any of it now:
    explicit per-institution enablement rather than exposing every CDR data
    holder by default.
 5. **Configure the Consent UI redirect/return URL(s)** the household's
-   browser lands on after completing (or cancelling) consent — this is
-   what a real `state`-verified callback route in `apps/web` would need to
-   exist at, and doesn't yet.
+   browser lands on after completing (or cancelling) consent. **Task 7C
+   built the `state`-verified callback route this points to** —
+   `https://<app host>/api/basiq/callback` — so this item is now just
+   registering that exact URL in the Basiq dashboard, not building
+   anything.
 6. **Confirm production-access / commercial-onboarding requirements** —
    whether Basiq's sandbox/test environment is sufficient for a genuine
    single-household deployment like FrodoCodo's, or whether a commercial

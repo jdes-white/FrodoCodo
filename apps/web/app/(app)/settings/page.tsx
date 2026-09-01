@@ -1,16 +1,18 @@
 import { requireSession } from "@/lib/session";
 import { prisma } from "@frodocodo/db";
+import { createFinancialProvider } from "@frodocodo/providers";
 import { getHousehold } from "@/lib/household";
 import { withRouteTiming } from "@/lib/perf";
-import { setAccountIncluded, disconnectInstitution } from "./actions";
+import { setAccountIncluded, disconnectInstitution, connectInstitution } from "./actions";
 import { Card } from "@/components/Card";
 import { PageHeader } from "@/components/PageHeader";
 
-export default async function SettingsPage() {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ connected?: string }> }) {
   const session = await requireSession();
   const isAdmin = session.role === "ADMIN";
+  const { connected } = await searchParams;
 
-  const [household, connections, members] = await withRouteTiming("/settings", () =>
+  const [household, connections, members, supportedInstitutions] = await withRouteTiming("/settings", () =>
     Promise.all([
       getHousehold(session.householdId),
       prisma.financialConnection.findMany({
@@ -18,12 +20,29 @@ export default async function SettingsPage() {
         include: { institution: true, accounts: true },
       }),
       prisma.householdMember.findMany({ where: { householdId: session.householdId }, include: { user: true } }),
+      createFinancialProvider().listSupportedInstitutions(),
     ]),
   );
+
+  const activeProviderInstitutionIds = new Set(
+    connections.filter((c) => c.isActive).map((c) => c.institution.providerInstitutionId),
+  );
+  const connectableInstitutions = supportedInstitutions.filter((i) => !activeProviderInstitutionIds.has(i.providerInstitutionId));
 
   return (
     <div className="flex flex-col gap-6">
       <PageHeader title="Settings" />
+
+      {connected === "success" && (
+        <div className="rounded-md p-3 text-sm" style={{ background: "var(--status-ahead-soft)", color: "var(--status-ahead)" }}>
+          Institution connected. Your accounts and transactions are syncing now.
+        </div>
+      )}
+      {connected === "error" && (
+        <div className="rounded-md p-3 text-sm" style={{ background: "var(--status-behind-soft)", color: "var(--status-behind)" }}>
+          We couldn&apos;t complete that connection. Nothing was changed — you can try again below.
+        </div>
+      )}
 
       <Section title="Household">
         <Row label="Name" value={household.name} />
@@ -92,6 +111,30 @@ export default async function SettingsPage() {
           </div>
         ))}
       </Section>
+
+      {isAdmin && connectableInstitutions.length > 0 && (
+        <Section title="Connect an institution">
+          <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+            FrodoCodo never sees your account number, BSB, balance, or bank login — only account discovery and
+            transactions, read-only.
+          </p>
+          <div className="mt-1 flex flex-col gap-2">
+            {connectableInstitutions.map((institution) => (
+              <form
+                key={institution.providerInstitutionId}
+                action={connectInstitution}
+                className="flex items-center justify-between"
+              >
+                <input type="hidden" name="providerInstitutionId" value={institution.providerInstitutionId} />
+                <span className="text-sm">{institution.name}</span>
+                <button type="submit" className="text-xs font-medium" style={{ color: "var(--status-ahead)" }}>
+                  Connect
+                </button>
+              </form>
+            ))}
+          </div>
+        </Section>
+      )}
 
       <Section title="AI & privacy">
         <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>

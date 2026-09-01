@@ -20,6 +20,15 @@ import type { FinancialDataProvider } from "@frodocodo/providers";
  * returns the same transactions again is a no-op past the first sync,
  * because resolveDedupe recognizes them (this is exactly what makes
  * automatic background sync safe to schedule frequently, §8).
+ *
+ * Task 7C: `apps/worker/package.json`'s `main`/`exports` point directly at
+ * this file, so `apps/web`'s live-connection flow
+ * (`apps/web/lib/basiqConnect.ts`) can run the household's very first sync
+ * synchronously right after they finish consent — through this exact same
+ * function the worker's own scheduled loop calls, never a re-implementation
+ * of dedupe/classify/reconcile in apps/web. This file has no top-level
+ * side effects (unlike `index.ts`, which starts the interval loop), so
+ * importing it is always safe.
  */
 export async function syncConnection(provider: FinancialDataProvider, connectionId: string): Promise<void> {
   const connection = await prisma.financialConnection.findUniqueOrThrow({

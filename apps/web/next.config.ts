@@ -16,6 +16,10 @@ const nextConfig: NextConfig = {
     "@frodocodo/providers",
     "@frodocodo/ai",
     "@frodocodo/db",
+    // Task 7C: apps/web's live-connection flow reuses apps/worker's
+    // syncConnection() (the real dedupe/classify/reconcile pipeline)
+    // rather than re-implementing it — see syncConnection.ts's doc comment.
+    "@frodocodo/worker",
   ],
   webpack: (config) => {
     // The workspace packages are plain-ESM TS and import their own sibling

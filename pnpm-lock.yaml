@@ -32,6 +32,9 @@ importers:
       '@frodocodo/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@frodocodo/worker':
+        specifier: workspace:*
+        version: link:../worker
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3
