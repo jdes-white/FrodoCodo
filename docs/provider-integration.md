@@ -2,18 +2,26 @@
 
 ## Current state
 
-`packages/providers` ships one adapter — `MockProvider` — implementing the
-`FinancialDataProvider` interface (`packages/providers/src/types.ts`) with
-deterministic synthetic data shaped like the three target products. No real
-bank credentials, no live aggregator account, are used or required anywhere
-in this repo.
+`packages/providers` ships two adapters implementing the
+`FinancialDataProvider` interface (`packages/providers/src/types.ts`):
 
-This was a deliberate scope decision for this build (see
-`docs/product-decisions.md`): connecting real accounts requires the
-household's own aggregator account and sign-off on live credential handling,
-which isn't something that should happen without the owner present. The
-interface is designed so adding that adapter later is additive, not a
-rewrite.
+- `MockProvider` — deterministic synthetic data shaped like the three
+  target products, used for all demo/dev/test purposes.
+- `BasiqProvider` (Task 7A, `packages/providers/src/basiq/`) — a real
+  adapter for **CBA and Virgin Money only** (Amex remains out of scope —
+  see below). **Implemented but never connected**: no real Basiq API key
+  has ever been used, no real Basiq user created, no real CDR consent
+  requested, no real account connected. See
+  `docs/basiq-integration.md` for the full architecture, the exact
+  consent/scope boundary, the token security design, and every item that
+  could not be verified against live Basiq documentation from the
+  environment this was built in.
+
+Connecting a REAL account for the first time is still a deliberate,
+owner-present decision (see `docs/product-decisions.md`) — the interface
+being implemented doesn't change that; it means the remaining work is
+configuration and live verification (see `docs/basiq-integration.md`'s
+unresolved pre-live items), not a rewrite.
 
 ## Target products — verified, not assumed
 
@@ -46,36 +54,33 @@ against their live supported-institutions list — aggregator coverage changes
 faster than any document can track, and this is exactly the kind of claim
 the original spec asked not to take on faith.
 
-## What a `BasiqProvider` adapter needs to implement
+## What `BasiqProvider` implements
 
-Everything in `FinancialDataProvider` (`packages/providers/src/types.ts`),
-mapping Basiq's API to our normalized shape:
+See `docs/basiq-integration.md` for the full writeup. Summary: every
+method `FinancialDataProvider` declares, mapping Basiq's API to our
+normalized shape — `listSupportedInstitutions` resolves CBA/Virgin by name
+against Basiq's live institutions list (never a hardcoded ID);
+`discoverAccounts`/`syncTransactions` map Basiq's account/transaction
+shape into `ProviderAccount`/`ProviderTransaction`, with nothing
+downstream ever persisting a raw Basiq response — every ingestion call
+site maps through `packages/ledger/src/ingestion.ts`'s allow-list
+functions first (Task 6B/6C); account aliasing still goes through
+`deriveDefaultAccountAlias`, never Basiq's own nickname string;
+`disconnectConnection` calls Basiq's revoke endpoint, and the disconnect
+action clears any stored token locally regardless of that call's outcome.
 
-- `listSupportedInstitutions()` → Basiq's institutions list, filtered to
-  what the household might plausibly connect.
-- `initiateConnection(institutionId)` → Basiq's connection/consent flow;
-  return whatever `redirectUrl` the household needs to complete an
-  OAuth-style CDR consent (or credential entry for the non-CDR pathway).
-- `getConsentStatus(providerConnectionId)` → poll or webhook-receive Basiq's
-  consent status, map to our `ConsentStatus` enum (`PENDING` / `ACTIVE` /
-  `EXPIRING` / `EXPIRED` / `REVOKED`).
-- `discoverAccounts` / `syncTransactions` → map Basiq's account/transaction
-  shape to `ProviderAccount`/`ProviderTransaction`. `ProviderTransaction.raw`
-  may still carry Basiq's original response for the adapter's own use, but
-  nothing downstream persists it: every ingestion call site maps into
-  `packages/ledger/src/ingestion.ts`'s `NormalizedTransactionInput` first,
-  whose allow-listed fields are the only thing that ever reaches the
-  database (Task 6B — see `docs/banking-data-minimisation-audit.md`). Do
-  not add a new field or code path that writes `raw`/the full Basiq
-  response into any table.
-- Account discovery must derive the household-facing `Account.alias` via
-  `deriveDefaultAccountAlias` (`packages/ledger/src/accountAlias.ts`) from
-  the institution's short name — never from Basiq's own account nickname
-  string, which can embed a masked-account-number fragment.
-- `disconnectConnection` → revoke consent via Basiq's API, not just locally.
+As designed from the start: none of `packages/ledger`, `packages/domain`,
+`apps/web`, or `apps/worker` needed to change to consume this adapter —
+they only ever see the normalized interface, confirmed by this
+implementation rather than just assumed.
 
-None of `packages/ledger`, `packages/domain`, `apps/web`, or `apps/worker`
-should need to change — they only ever see the normalized interface.
+## Amex remains out of scope
+
+Task 7A implemented CBA and Virgin only. Amex stays manual/screenshot-based
+until its non-CDR connection path (Basiq's credential-relay "Connect"
+pathway, or Amex's eventual CDR participation) is separately verified —
+see `docs/banking-data-minimisation-audit.md` for why that path carries a
+materially different trust model than CBA/Virgin's CDR-based one.
 
 ## Required environment for a real deployment
 

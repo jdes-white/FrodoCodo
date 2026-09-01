@@ -374,7 +374,8 @@ from the Vercel period. It is:
 | `NODE_ENV` | No (default via Dockerfile: `production`) | |
 | `FINANCIAL_PROVIDER` | No (default `mock`) | Left as `mock` for the beta |
 | `AI_PROVIDER` | No (default `stub`) | Left as `stub` for the beta |
-| `BASIQ_API_KEY` | Not currently required | Only if `FINANCIAL_PROVIDER=basiq` — see `docs/provider-integration.md` first |
+| `BASIQ_API_KEY` | Not currently required | Only if `FINANCIAL_PROVIDER=basiq` — see `docs/basiq-integration.md` first; the adapter exists (Task 7A) but has never been connected to a live account |
+| `APP_ENCRYPTION_KEY` | Not currently required | Required before `FINANCIAL_PROVIDER=basiq` is ever set for real — encrypts a real provider connection's access/refresh token at rest (`packages/db/src/payloadEncryption.ts`); `encryptForStorage()` throws in production without it rather than persisting a token unencrypted |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Not currently required | Only if `AI_PROVIDER=anthropic` |
 | `WORKER_SYNC_INTERVAL_MINUTES` | Not currently required | Only relevant if `apps/worker` is ever deployed as its own service |
 

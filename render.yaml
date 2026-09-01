@@ -86,7 +86,13 @@ services:
         value: stub
       # --- Not currently required — left unset intentionally ---
       # BASIQ_API_KEY: only if FINANCIAL_PROVIDER=basiq (see
-      #   docs/provider-integration.md before ever setting this).
+      #   docs/basiq-integration.md before ever setting this — the adapter
+      #   exists but has never been connected to a live account).
+      # APP_ENCRYPTION_KEY (packages/db/src/payloadEncryption.ts): required
+      #   before FINANCIAL_PROVIDER=basiq is ever set for real — a real
+      #   connection's provider token must be encrypted at rest
+      #   (docs/basiq-integration.md), and encryptForStorage() throws in
+      #   production without this key rather than persisting one unencrypted.
       # ANTHROPIC_API_KEY / ANTHROPIC_MODEL: only if AI_PROVIDER=anthropic.
       # WORKER_SYNC_INTERVAL_MINUTES: only relevant if apps/worker is ever
       #   deployed as its own service.

@@ -30,15 +30,25 @@ this filter. If you add a new query, follow the existing pattern — see
 
 ## Secrets
 
-- `DATABASE_URL`, `AUTH_SECRET`, `BASIQ_API_KEY`, `ANTHROPIC_API_KEY` are
-  read from environment variables only, never committed (`.env` is
-  git-ignored; `.env.example` documents the shape with no real values).
+- `DATABASE_URL`, `AUTH_SECRET`, `BASIQ_API_KEY`, `APP_ENCRYPTION_KEY`,
+  `ANTHROPIC_API_KEY` are read from environment variables only, never
+  committed (`.env` is git-ignored; `.env.example` documents the shape
+  with no real values).
 - The Anthropic API key is used exclusively in `packages/ai`'s
   `AnthropicGateway`, instantiated only in server-side code
   (`apps/web/lib/aiGateway.ts`) — never sent to or reachable from the
   client bundle.
-- A real `BASIQ_API_KEY` would follow the same pattern: server-side only,
-  never in a route that returns to the client.
+- `BASIQ_API_KEY` follows the same pattern: read once, server-side only
+  (`packages/providers/src/factory.ts`), never in a route that returns to
+  the client, never logged (`packages/providers/src/basiq/httpClient.ts`
+  strips it from every error message). Implemented (Task 7A,
+  `docs/basiq-integration.md`) but never set to a real value or used
+  against the live Basiq API anywhere in this repo.
+- `APP_ENCRYPTION_KEY` (`packages/db/src/payloadEncryption.ts`) protects a
+  real provider connection's access/refresh token at rest
+  (`FinancialConnection.accessTokenEncrypted`/`refreshTokenEncrypted`) —
+  see `docs/basiq-integration.md`'s token security section for the full
+  threat model.
 
 ## What the AI provider sees
 

@@ -281,6 +281,21 @@ model FinancialConnection {
   consentStatus        ConsentStatus    @default(PENDING)
   consentGrantedAt     DateTime?
   consentExpiresAt     DateTime?
+  // Task 7A credential/token threat model (docs/basiq-integration.md,
+  // docs/banking-data-minimisation-audit.md §8): a provider access/refresh
+  // token, when a provider adapter needs to hold one, is never stored
+  // plaintext. Each envelope is the same AES-256-GCM authenticated
+  // structure `packages/db/src/payloadEncryption.ts` already produces —
+  // `{ v, alg, iv, authTag, ciphertext }` — reused via
+  // `packages/db/src/connectionTokenStorage.ts` rather than a bespoke
+  // scheme. Null for MockProvider (no token exists) and, in Basiq's actual
+  // architecture, for any connection whose per-user session state is held
+  // entirely on Basiq's side rather than handed to FrodoCodo at all — this
+  // column exists to be ready for whichever shape a real token takes, not
+  // because every adapter is guaranteed to populate it.
+  accessTokenEncrypted  Json?
+  refreshTokenEncrypted Json?
+  tokenExpiresAt        DateTime?
   lastSyncedAt         DateTime?
   isActive             Boolean          @default(true)
   createdAt            DateTime         @default(now())

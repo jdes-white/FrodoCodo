@@ -2,9 +2,9 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { logDbEvent } from "./dbErrors.js";
 
 /**
- * General-purpose application-level authenticated encryption envelope,
- * originally built for `Transaction.rawProviderPayload` (security audit
- * finding H3). That column no longer exists: Task 6B's data-minimisation
+ * General-purpose application-level authenticated encryption envelope.
+ * Originally built for `Transaction.rawProviderPayload` (security audit
+ * finding H3); that column no longer exists — Task 6B's data-minimisation
  * pass removed raw-provider-payload storage from the ingestion path
  * entirely (see apps/worker/src/syncConnection.ts,
  * packages/db/src/seedHousehold.ts, and
@@ -12,24 +12,25 @@ import { logDbEvent } from "./dbErrors.js";
  * encrypt-and-keep it — data FrodoCodo never retains cannot later leak,
  * which is a stronger guarantee than encryption-at-rest alone.
  *
- * This utility is kept (not tied to any specific column) because it's
- * exactly the mechanism a future need identified in the Task 6A audit will
- * require: encrypting a provider/CDR access or refresh token at rest once
- * a real banking connection exists (docs/banking-data-minimisation-audit.md
- * §8 — a stolen token is the single most sensitive thing FrodoCodo would
- * ever hold). Nothing in this codebase calls `encryptForStorage`/
- * `decryptFromStorage` today; `packages/db/src/__tests__/payloadEncryption.test.ts`
- * exercises the utility directly.
+ * Task 7A gives this utility its first real caller:
+ * `packages/db/src/connectionTokenStorage.ts` uses it to encrypt a
+ * provider connection's access/refresh token
+ * (`FinancialConnection.accessTokenEncrypted`/`refreshTokenEncrypted`) —
+ * exactly the future need this file was kept for after H3 (see
+ * docs/banking-data-minimisation-audit.md §8). The env var was renamed
+ * from `TRANSACTION_PAYLOAD_ENCRYPTION_KEY` to `APP_ENCRYPTION_KEY`
+ * accordingly — the old name became actively misleading once it started
+ * protecting more than transaction payloads.
  *
  * Produces an envelope `{ v, alg, iv, authTag, ciphertext }` via
  * AES-256-GCM (authenticated encryption, not just encoding — a tampered or
  * truncated envelope fails to decrypt rather than silently returning
  * garbage).
  *
- * The key comes from TRANSACTION_PAYLOAD_ENCRYPTION_KEY (base64, 32 bytes)
- * only — never hardcoded, never committed. When it's missing:
+ * The key comes from APP_ENCRYPTION_KEY (base64, 32 bytes) only — never
+ * hardcoded, never committed. When it's missing:
  *  - in production, encryptForStorage throws rather than ever persisting a
- *    payload as plaintext (fail closed).
+ *    secret as plaintext (fail closed).
  *  - outside production, it returns undefined rather than storing
  *    plaintext.
  */
@@ -37,6 +38,7 @@ import { logDbEvent } from "./dbErrors.js";
 const ALGORITHM = "aes-256-gcm";
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
+const ENV_VAR = "APP_ENCRYPTION_KEY";
 
 export interface EncryptedPayloadEnvelope {
   v: 1;
@@ -54,17 +56,17 @@ function isEncryptedEnvelope(value: unknown): value is EncryptedPayloadEnvelope 
 
 /** Never logs or throws the key material itself — only whether it was present/well-formed. */
 function getEncryptionKey(): Buffer | null {
-  const raw = process.env.TRANSACTION_PAYLOAD_ENCRYPTION_KEY;
+  const raw = process.env[ENV_VAR];
   if (!raw) return null;
 
   let key: Buffer;
   try {
     key = Buffer.from(raw, "base64");
   } catch {
-    throw new Error("TRANSACTION_PAYLOAD_ENCRYPTION_KEY is not valid base64.");
+    throw new Error(`${ENV_VAR} is not valid base64.`);
   }
   if (key.length !== KEY_BYTES) {
-    throw new Error(`TRANSACTION_PAYLOAD_ENCRYPTION_KEY must decode to ${KEY_BYTES} bytes.`);
+    throw new Error(`${ENV_VAR} must decode to ${KEY_BYTES} bytes.`);
   }
   return key;
 }
@@ -73,7 +75,8 @@ function getEncryptionKey(): Buffer | null {
  * Returns an encrypted envelope to store, or `undefined` to store nothing
  * (leave the column null) — never the plaintext payload. Throws in
  * production if no key is configured, since that's the environment where a
- * real provider payload landing here unencrypted would be a real exposure.
+ * real secret (a provider token today) landing here unencrypted would be a
+ * real exposure.
  */
 export function encryptForStorage(payload: unknown): EncryptedPayloadEnvelope | undefined {
   if (payload === null || payload === undefined) return undefined;
@@ -81,11 +84,9 @@ export function encryptForStorage(payload: unknown): EncryptedPayloadEnvelope | 
   const key = getEncryptionKey();
   if (!key) {
     if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "TRANSACTION_PAYLOAD_ENCRYPTION_KEY is required in production to store a raw provider payload; refusing to persist it in any form.",
-      );
+      throw new Error(`${ENV_VAR} is required in production to store this value; refusing to persist it in any form.`);
     }
-    logDbEvent("raw_payload_encryption_key_missing", { stored: false });
+    logDbEvent("app_encryption_key_missing", { stored: false });
     return undefined;
   }
 
@@ -105,13 +106,13 @@ export function encryptForStorage(payload: unknown): EncryptedPayloadEnvelope | 
 
 /**
  * Decrypts an envelope produced by encryptForStorage. Server-side only, and
- * only for a caller that explicitly needs the raw payload back (nothing in
- * the app currently does — this exists for future authorized audit/debug
- * use). Fails closed: throws on a missing/misconfigured key, a value that
- * isn't a well-formed envelope (e.g. a historical plaintext row from before
- * this change), or a tampered/wrong-key ciphertext — never silently returns
- * partial or incorrect data. Never includes the key or the payload contents
- * in a thrown message.
+ * only for a caller that explicitly needs the plaintext back (today: the
+ * worker, to present a valid provider token on the next sync — see
+ * packages/db/src/connectionTokenStorage.ts). Fails closed: throws on a
+ * missing/misconfigured key, a value that isn't a well-formed envelope, or
+ * a tampered/wrong-key ciphertext — never silently returns partial or
+ * incorrect data. Never includes the key or the payload contents in a
+ * thrown message.
  */
 export function decryptFromStorage(stored: unknown): unknown {
   if (stored === null || stored === undefined) return null;
@@ -122,7 +123,7 @@ export function decryptFromStorage(stored: unknown): unknown {
 
   const key = getEncryptionKey();
   if (!key) {
-    throw new Error("TRANSACTION_PAYLOAD_ENCRYPTION_KEY is not configured; cannot decrypt.");
+    throw new Error(`${ENV_VAR} is not configured; cannot decrypt.`);
   }
 
   const decipher = createDecipheriv(ALGORITHM, key, Buffer.from(stored.iv, "base64"));

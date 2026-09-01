@@ -1,18 +1,11 @@
-import { MockProvider, type FinancialDataProvider } from "@frodocodo/providers";
+import { createFinancialProvider, type FinancialDataProvider } from "@frodocodo/providers";
 
 /**
- * Resolves which FinancialDataProvider adapter backs live sync. Swapping
- * the real aggregator in later is a config change here, not a rewrite of
- * anything that calls this (§7). See docs/provider-integration.md for what
- * a BasiqProvider adapter needs to implement against this same interface.
+ * Thin re-export — the actual FINANCIAL_PROVIDER/BASIQ_API_KEY resolution
+ * lives in packages/providers/src/factory.ts (Task 7A), shared with
+ * apps/web's disconnect action so both apps instantiate the exact same
+ * adapter rather than duplicating the provider-selection switch.
  */
 export function getProvider(): FinancialDataProvider {
-  const providerName = process.env.FINANCIAL_PROVIDER ?? "mock";
-
-  if (providerName === "mock") return new MockProvider();
-
-  throw new Error(
-    `Unknown FINANCIAL_PROVIDER "${providerName}". Only "mock" is wired in this repo — ` +
-      "see docs/provider-integration.md before adding a live adapter.",
-  );
+  return createFinancialProvider();
 }

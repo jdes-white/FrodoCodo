@@ -44,7 +44,13 @@ export default async function SettingsPage() {
           </p>
         )}
         {connections.map((conn) => (
-          <div key={conn.id} className="border-t pt-3 first:border-t-0 first:pt-0" style={{ borderColor: "var(--color-border)" }}>
+          <div
+            key={conn.id}
+            data-testid={`connection-${conn.id}`}
+            data-connection-status={conn.isActive ? conn.consentStatus : "DISCONNECTED"}
+            className="border-t pt-3 first:border-t-0 first:pt-0"
+            style={{ borderColor: "var(--color-border)" }}
+          >
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium">{conn.institution.name}</p>

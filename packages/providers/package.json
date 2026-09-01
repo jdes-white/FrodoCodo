@@ -19,6 +19,7 @@
     "decimal.js": "^10.4.3"
   },
   "devDependencies": {
+    "@frodocodo/ledger": "workspace:*",
     "typescript": "^5.7.3",
     "vitest": "^3.0.4"
   }

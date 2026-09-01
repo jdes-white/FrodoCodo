@@ -11,7 +11,7 @@ afterEach(() => {
 
 describe("encryptForStorage / decryptFromStorage round-trip", () => {
   beforeEach(() => {
-    process.env.TRANSACTION_PAYLOAD_ENCRYPTION_KEY = VALID_KEY;
+    process.env.APP_ENCRYPTION_KEY = VALID_KEY;
   });
 
   it("encrypts to an authenticated envelope, never the plaintext shape", () => {
@@ -58,7 +58,7 @@ describe("encryptForStorage / decryptFromStorage round-trip", () => {
 
   it("fails closed on decrypt with the wrong key", () => {
     const envelope = encryptForStorage({ a: 1 })!;
-    process.env.TRANSACTION_PAYLOAD_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    process.env.APP_ENCRYPTION_KEY = randomBytes(32).toString("base64");
     expect(() => decryptFromStorage(envelope)).toThrow();
   });
 
@@ -69,7 +69,7 @@ describe("encryptForStorage / decryptFromStorage round-trip", () => {
 
 describe("missing key behaviour", () => {
   beforeEach(() => {
-    delete process.env.TRANSACTION_PAYLOAD_ENCRYPTION_KEY;
+    delete process.env.APP_ENCRYPTION_KEY;
   });
 
   it("outside production: stores nothing (undefined) rather than plaintext", () => {
@@ -79,20 +79,20 @@ describe("missing key behaviour", () => {
 
   it("in production: fails closed and throws rather than persisting plaintext", () => {
     process.env.NODE_ENV = "production";
-    expect(() => encryptForStorage({ source: "mock" })).toThrow(/TRANSACTION_PAYLOAD_ENCRYPTION_KEY/);
+    expect(() => encryptForStorage({ source: "mock" })).toThrow(/APP_ENCRYPTION_KEY/);
   });
 
   it("decrypt always fails closed when the key is missing, regardless of environment", () => {
     process.env.NODE_ENV = "test";
     expect(() => decryptFromStorage({ v: 1, alg: "aes-256-gcm", iv: "AAAA", authTag: "AAAA", ciphertext: "AAAA" })).toThrow(
-      /TRANSACTION_PAYLOAD_ENCRYPTION_KEY/,
+      /APP_ENCRYPTION_KEY/,
     );
   });
 });
 
 describe("malformed key", () => {
   it("rejects a key that isn't 32 bytes once decoded", () => {
-    process.env.TRANSACTION_PAYLOAD_ENCRYPTION_KEY = Buffer.from("too-short").toString("base64");
+    process.env.APP_ENCRYPTION_KEY = Buffer.from("too-short").toString("base64");
     expect(() => encryptForStorage({ a: 1 })).toThrow(/32 bytes/);
   });
 });
