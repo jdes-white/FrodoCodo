@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { prisma } from "@frodocodo/db";
-import { TEST_FIXTURE_MARKER, type ScreenshotExtractionResult } from "@frodocodo/ai";
+import { TEST_FIXTURE_MARKER, type ScreenshotExtractionFixture } from "@frodocodo/ai";
 
 /**
  * Batch screenshot transaction import, exercised end-to-end against the
@@ -36,7 +36,7 @@ async function login(page: Page, email: string, password: string) {
 // RUN_ID.
 const RUN_ID = Math.random().toString(36).slice(2, 8).toUpperCase();
 
-function fixture(name: string, result: ScreenshotExtractionResult) {
+function fixture(name: string, result: ScreenshotExtractionFixture) {
   return { name, mimeType: "image/png", buffer: Buffer.from(TEST_FIXTURE_MARKER + JSON.stringify(result), "utf8") };
 }
 
@@ -188,6 +188,74 @@ test.describe("Batch screenshot import", () => {
         AND (column_name ILIKE '%screenshot%' OR column_name ILIKE '%image%' OR column_name ILIKE '%photo%')
     `;
     expect(columns).toHaveLength(0);
+  });
+
+  test("screenshot upload bytes never leak into audit log metadata", async ({ page }) => {
+    const row = { date: daysAgo(1), description: `AUDIT LEAK CHECK ${RUN_ID}`, amount: "9.99", direction: "DEBIT" as const, status: "POSTED" as const, confidence: 0.9 };
+    await login(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+    await uploadScreenshots(page, [fixture("audit-check.png", { source: "CBA", accountHint: "Everyday Offset", transactions: [row] })]);
+
+    const events = await prisma.auditEvent.findMany({ where: { action: "SCREENSHOT_IMPORT" }, orderBy: { createdAt: "desc" }, take: 1 });
+    expect(events).toHaveLength(1);
+    const metadataText = JSON.stringify(events[0]!.metadata);
+    // The audit event carries only the summary's counts (see
+    // apps/web/lib/screenshotImport.ts's recordAuditEvent call) — never the
+    // raw fixture bytes, the TEST_FIXTURE_MARKER itself, or the row's own
+    // description text.
+    expect(metadataText).not.toContain(TEST_FIXTURE_MARKER);
+    expect(metadataText).not.toContain(row.description);
+  });
+
+  test("a plausible but uncertain (low-confidence) row is imported and flagged for review, never silently dropped", async ({ page }) => {
+    const uncertainRow = { date: daysAgo(2), description: `BLURRY MERCHANT NAME ${RUN_ID}`, amount: "18.40", direction: "DEBIT" as const, status: "POSTED" as const, confidence: 0.35 };
+    await login(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+    await uploadScreenshots(page, [fixture("uncertain.png", { source: "CBA", accountHint: "Everyday Offset", transactions: [uncertainRow] })]);
+
+    await expect(page.getByText("1 transaction found")).toBeVisible();
+    await expect(page.getByText("0 new")).toBeVisible();
+    await expect(page.getByText("1 need review")).toBeVisible();
+
+    const tx = await prisma.transaction.findFirstOrThrow({ where: { originalDescription: uncertainRow.description } });
+    expect(tx.needsExtractionReview).toBe(true);
+    // Never invented data — the exact figures the model reported, just flagged.
+    expect(tx.amount.toString()).toBe("18.4");
+    expect(tx.direction).toBe("DEBIT");
+  });
+
+  test("rows the model can see but can't confidently structure are counted and surfaced, never fabricated as a transaction", async ({ page }) => {
+    const goodRow = { date: daysAgo(1), description: `WOOLWORTHS METRO ${RUN_ID}`, amount: "24.10", direction: "DEBIT" as const, status: "POSTED" as const, confidence: 0.92 };
+    await login(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+    await uploadScreenshots(page, [
+      fixture("partial-rows.png", { source: "CBA", accountHint: "Everyday Offset", visibleRowCount: 3, transactions: [goodRow] }),
+    ]);
+
+    // Only the one structurable row is ever counted as "found"/"new" — the
+    // other two the model saw but couldn't structure are surfaced
+    // separately, never silently absorbed into a "fully successful" report.
+    await expect(page.getByText("1 transaction found")).toBeVisible();
+    await expect(page.getByText("1 new")).toBeVisible();
+    await expect(page.getByText("2 transactions could not be reliably read — review required")).toBeVisible();
+
+    const goodCount = await prisma.transaction.count({ where: { originalDescription: goodRow.description } });
+    expect(goodCount).toBe(1);
+  });
+
+  test("a clean, fully-confident batch requires no manual review at all", async ({ page }) => {
+    const row = { date: daysAgo(1), description: `BUNNINGS WAREHOUSE ${RUN_ID}`, amount: "63.20", direction: "DEBIT" as const, status: "POSTED" as const, confidence: 0.97 };
+    await login(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+    await uploadScreenshots(page, [fixture("clean.png", { source: "CBA", accountHint: "Everyday Offset", transactions: [row] })]);
+
+    await expect(page.getByText("1 new")).toBeVisible();
+    await expect(page.getByText("need review")).toHaveCount(0);
+    await expect(page.getByText("could not be reliably read")).toHaveCount(0);
+  });
+
+  test("an unrecognized/unsupported screenshot layout fails closed rather than being forwarded anywhere", async ({ page }) => {
+    await login(page, ADMIN_EMAIL, ADMIN_PASSWORD);
+    await uploadScreenshots(page, [fixture("unsupported-layout.png", { source: "UNKNOWN", transactions: [] })]);
+
+    await expect(page.getByText("0 transactions found")).toBeVisible();
+    await expect(page.getByText("1 screenshot couldn't be read")).toBeVisible();
   });
 });
 

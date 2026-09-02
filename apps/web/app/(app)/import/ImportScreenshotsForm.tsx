@@ -1,22 +1,48 @@
 "use client";
 
-import { useActionState } from "react";
-import { processScreenshotImport, type ImportActionState } from "./actions";
+import { useState, type FormEvent } from "react";
+import type { ScreenshotImportSummary } from "@/lib/screenshotImport";
 import { Card } from "@/components/Card";
 
-const INITIAL_STATE: ImportActionState = { status: "idle" };
+type ImportState = { status: "idle" } | { status: "error"; error: string } | { status: "success"; summary: ScreenshotImportSummary };
+
+const INITIAL_STATE: ImportState = { status: "idle" };
 
 /**
  * Phone-first: a single native file picker (iOS/Android photo picker or
  * Files app both work with `<input type="file" multiple accept="image/*">`
  * with zero extra plumbing) submitting the whole batch in one request.
- * `useActionState` is what lets this show the concise result summary
- * inline without a page navigation — the first use of this pattern in the
- * app, justified specifically because this is the one flow that needs an
- * immediate, structured result rather than a redirect.
+ *
+ * This posts to `/api/import` (a Route Handler) with a plain `fetch`
+ * rather than a Server Action + `useActionState` — see
+ * `apps/web/app/api/import/route.ts`'s doc comment for why: the
+ * sanitisation step depends on a native addon (`sharp`) that Next's
+ * Server Actions bundle doesn't load correctly. The UI/UX is otherwise
+ * identical to a Server Action form — one submit, one concise inline
+ * result, no page navigation.
  */
 export function ImportScreenshotsForm() {
-  const [state, formAction, isPending] = useActionState(processScreenshotImport, INITIAL_STATE);
+  const [state, setState] = useState<ImportState>(INITIAL_STATE);
+  const [isPending, setIsPending] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    setIsPending(true);
+    try {
+      const response = await fetch("/api/import", { method: "POST", body: formData });
+      const data = (await response.json()) as { summary?: ScreenshotImportSummary; error?: string };
+      if (!response.ok || !data.summary) {
+        setState({ status: "error", error: data.error ?? "Something went wrong processing the screenshots." });
+      } else {
+        setState({ status: "success", summary: data.summary });
+      }
+    } catch {
+      setState({ status: "error", error: "Something went wrong processing the screenshots." });
+    } finally {
+      setIsPending(false);
+    }
+  }
 
   return (
     <Card as="section" className="flex flex-col gap-4">
@@ -25,7 +51,7 @@ export function ImportScreenshotsForm() {
         never keeps the images themselves.
       </p>
 
-      <form action={formAction} className="flex flex-col gap-3">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <input type="file" name="screenshots" accept="image/*" multiple required className="text-sm" />
         <button
           type="submit"
@@ -62,6 +88,12 @@ export function ImportScreenshotsForm() {
             {state.summary.screenshotsUnrecognized > 0 && (
               <li>
                 {state.summary.screenshotsUnrecognized} screenshot{state.summary.screenshotsUnrecognized === 1 ? "" : "s"} couldn&apos;t be read
+              </li>
+            )}
+            {state.summary.unreadableTransactionCount > 0 && (
+              <li style={{ color: "var(--status-behind)" }}>
+                {state.summary.unreadableTransactionCount} transaction{state.summary.unreadableTransactionCount === 1 ? "" : "s"} could not be
+                reliably read — review required
               </li>
             )}
           </ul>

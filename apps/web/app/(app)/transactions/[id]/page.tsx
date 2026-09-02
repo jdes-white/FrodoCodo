@@ -12,6 +12,7 @@ import {
   updateNotes,
   keepAsSeparateTransaction,
   markAsDuplicateTransaction,
+  clearExtractionReview,
 } from "./actions";
 import { Card } from "@/components/Card";
 import { CategoryIcon } from "@/components/CategoryIcon";
@@ -98,6 +99,24 @@ export default async function TransactionDetailPage({ params }: { params: Promis
               </button>
             </form>
           </div>
+        </Card>
+      )}
+
+      {transaction.needsExtractionReview && (
+        <Card as="section">
+          <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--status-behind)" }}>
+            Low-confidence read
+          </h2>
+          <p className="mb-3 text-sm" style={{ color: "var(--color-text-muted)" }}>
+            This transaction was imported from a screenshot the vision model wasn&apos;t fully confident about — double check
+            the date, description, and amount above look right.
+          </p>
+          <form action={clearExtractionReview}>
+            <input type="hidden" name="transactionId" value={transaction.id} />
+            <button type="submit" className="rounded-lg border px-3 py-1.5 text-sm" style={{ borderColor: "var(--color-border)" }}>
+              This looks correct
+            </button>
+          </form>
         </Card>
       )}
 

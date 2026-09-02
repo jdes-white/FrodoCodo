@@ -34,12 +34,15 @@ export async function listTransactions(householdId: string, filters: Transaction
       ],
     });
   }
-  // "Needs review" now covers two independent reasons a transaction needs
-  // household attention: uncategorized (the original meaning), or flagged
-  // by screenshot-import dedupe as a possible duplicate
-  // (Transaction.possibleDuplicateOfId, packages/ledger/src/screenshotDedupe.ts)
-  // — reusing this existing review queue rather than building a parallel one.
-  if (filters.needsReviewOnly) and.push({ OR: [{ categoryId: null }, { possibleDuplicateOfId: { not: null } }] });
+  // "Needs review" now covers three independent reasons a transaction needs
+  // household attention: uncategorized (the original meaning), flagged by
+  // screenshot-import dedupe as a possible duplicate
+  // (Transaction.possibleDuplicateOfId, packages/ledger/src/screenshotDedupe.ts),
+  // or flagged by screenshot-import vision extraction as a low-confidence
+  // read (Transaction.needsExtractionReview,
+  // packages/ai/src/screenshotExtraction.ts) — reusing this existing review
+  // queue rather than building a parallel one per reason.
+  if (filters.needsReviewOnly) and.push({ OR: [{ categoryId: null }, { possibleDuplicateOfId: { not: null } }, { needsExtractionReview: true }] });
   if (filters.reviewedOnly) and.push({ categoryId: { not: null } });
   if (!filters.includeExcluded) and.push({ isExcludedFromBudget: false });
   if (filters.startDate || filters.endDate) {

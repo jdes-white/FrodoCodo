@@ -676,6 +676,19 @@ model Transaction {
   // row instead — see apps/web/app/(app)/transactions/[id]/actions.ts).
   possibleDuplicateOfId String?
 
+  // Screenshot-import extraction uncertainty (screenshot-import hardening
+  // task, packages/ai/src/screenshotExtraction.ts): set when the vision
+  // extractor reported this row below its confidence floor — a plausible,
+  // structurable transaction (never fabricated data) that a household
+  // member should glance at rather than one FrodoCodo silently trusted or
+  // silently dropped. Deliberately a separate flag from
+  // possibleDuplicateOfId above — a row can need review for either reason,
+  // both, or neither. Never set by any other ingestion path (a live
+  // provider sync has no comparable "the model wasn't sure" signal).
+  // Cleared by the household confirming the row is correct (see
+  // clearExtractionReview in apps/web/app/(app)/transactions/[id]/actions.ts).
+  needsExtractionReview Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -699,6 +712,7 @@ model Transaction {
   @@index([status])
   @@index([isExcludedFromBudget])
   @@index([possibleDuplicateOfId])
+  @@index([needsExtractionReview])
 }
 
 model TransactionClassification {

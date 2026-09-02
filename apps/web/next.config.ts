@@ -17,8 +17,12 @@ const nextConfig: NextConfig = {
   // recommendation for Next.js is to declare it external so webpack leaves
   // that resolution to plain Node `require()` instead of bundling it. This
   // is generic Next.js + Prisma guidance, unrelated to any specific
-  // hosting platform.
-  serverExternalPackages: ["@prisma/client"],
+  // hosting platform. `sharp` (screenshot-import sanitisation,
+  // packages/ai/src/screenshotSanitizer.ts) needs the exact same treatment
+  // for the exact same reason — its native libvips binding resolves itself
+  // via a runtime path lookup that webpack's bundling breaks ("Could not
+  // load the 'sharp' module using the linux-x64 runtime").
+  serverExternalPackages: ["@prisma/client", "sharp"],
   transpilePackages: [
     "@frodocodo/shared",
     "@frodocodo/domain",

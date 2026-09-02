@@ -344,3 +344,32 @@ export async function markAsDuplicateTransaction(formData: FormData): Promise<vo
   revalidatePath("/");
   redirect("/transactions");
 }
+
+/**
+ * Screenshot-import extraction-uncertainty review
+ * (packages/ai/src/screenshotExtraction.ts): the household confirms this
+ * transaction's details (date/description/amount) look correct despite the
+ * vision model's low confidence — just clears the flag, the row itself is
+ * never altered (no data was ever fabricated to begin with, so there is
+ * nothing to "fix", only to confirm).
+ */
+export async function clearExtractionReview(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const transactionId = String(formData.get("transactionId"));
+
+  await prisma.transaction.updateMany({
+    where: { id: transactionId, account: { connection: { householdId: session.householdId } } },
+    data: { needsExtractionReview: false },
+  });
+
+  await recordAuditEvent({
+    householdId: session.householdId,
+    actorUserId: session.userId,
+    action: "CONFIRM_EXTRACTION_CORRECT",
+    entityType: "Transaction",
+    entityId: transactionId,
+  });
+
+  revalidatePath(`/transactions/${transactionId}`);
+  revalidatePath("/transactions");
+}
