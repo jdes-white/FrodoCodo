@@ -50,6 +50,20 @@ import { sanitizeScreenshot } from "./screenshotSanitizer";
  * could structure but wasn't fully confident about is still imported, just
  * flagged `needsExtractionReview` — see `packages/ai/src/screenshotExtraction.ts`'s
  * doc comment for the three-way outcome this implements.
+ *
+ * DIAGNOSABILITY: `screenshotsUnrecognized` intentionally merges two very
+ * different situations into one user-facing count — a screenshot whose
+ * layout genuinely isn't one of the three known apps, and a screenshot
+ * whose layout WAS recognized but whose vision extraction call itself
+ * failed (most commonly: no AI provider configured, or a real provider
+ * error). A real-screenshot test that reports every upload as
+ * unrecognized is easy to misdiagnose as "the sanitizer's colour
+ * calibration is broken" when the actual cause is the latter — this
+ * module logs the two cases distinctly (`scope: "screenshotImport"`,
+ * `event: "sanitization_rejected"` vs `"extraction_failed"`, both with a
+ * content-free `reason`) precisely so that distinction is checkable from
+ * server logs without changing the summary contract callers already rely
+ * on.
  */
 
 export interface ScreenshotFileInput {
@@ -117,6 +131,13 @@ export async function importScreenshotBatch(
     if (sanitized.status === "UNSUPPORTED_LAYOUT") {
       // Fails closed: the original bytes are never forwarded to the
       // extractor in any form — this screenshot simply isn't processed.
+      // Logged distinctly from an extraction failure below (both currently
+      // collapse into the same user-facing "couldn't be read" count, which
+      // made a real screenshot rejection indistinguishable from an
+      // unconfigured/broken AI provider from the summary alone — see this
+      // module's doc comment). The reason string here is always one of
+      // sanitizeScreenshot's own static, content-free messages.
+      console.log(JSON.stringify({ scope: "screenshotImport", event: "sanitization_rejected", reason: sanitized.reason }));
       screenshotsUnrecognized++;
       continue;
     }
@@ -124,10 +145,17 @@ export async function importScreenshotBatch(
     let result;
     try {
       result = await extractor(sanitized.image, { todayIso, knownSource: sanitized.layout });
-    } catch {
-      result = { status: "EXTRACTION_FAILED" as const, reason: "extractor threw" };
+    } catch (err) {
+      result = { status: "EXTRACTION_FAILED" as const, reason: err instanceof Error ? err.message : "extractor threw" };
     }
     if (result.status === "EXTRACTION_FAILED") {
+      // Distinct from a sanitization rejection above — this screenshot's
+      // layout WAS correctly identified; the vision call itself failed
+      // (e.g. no AI provider configured, or a real provider/API error).
+      // `reason` is either the stub's static "no provider configured"
+      // message or an SDK/HTTP error message — never user-supplied image
+      // content.
+      console.log(JSON.stringify({ scope: "screenshotImport", event: "extraction_failed", layout: sanitized.layout, reason: result.reason }));
       screenshotsUnrecognized++;
       continue;
     }
