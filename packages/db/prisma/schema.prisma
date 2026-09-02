@@ -664,6 +664,18 @@ model Transaction {
 
   refundOfTransactionId String?
 
+  // Screenshot-import dedupe (packages/ledger/src/screenshotDedupe.ts):
+  // set when a screenshot-sourced candidate's account/amount/direction/date
+  // matched an existing (or another new) transaction closely enough to be
+  // *possibly* the same real-world transaction, but not closely enough
+  // (via description) to auto-collapse with confidence — e.g. "COLES 0092"
+  // vs "COLES 0417" on the same day for the same amount. Never set by any
+  // other ingestion path. Non-null is itself the "needs review" flag; no
+  // separate boolean. Cleared (set to null) once a household confirms
+  // either "keep both" or "this is a duplicate" (the latter deletes this
+  // row instead — see apps/web/app/(app)/transactions/[id]/actions.ts).
+  possibleDuplicateOfId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -677,6 +689,8 @@ model Transaction {
   counterpartOf     Transaction? @relation("TransferCounterpart")
   refundOf         Transaction?  @relation("RefundChain", fields: [refundOfTransactionId], references: [id], onDelete: SetNull)
   refunds          Transaction[] @relation("RefundChain")
+  possibleDuplicateOf        Transaction?  @relation("PossibleDuplicate", fields: [possibleDuplicateOfId], references: [id], onDelete: SetNull)
+  flaggedAsPossibleDuplicate Transaction[] @relation("PossibleDuplicate")
   insightEvidence  InsightEvidence[]
 
   @@unique([accountId, providerTransactionId])
@@ -684,6 +698,7 @@ model Transaction {
   @@index([categoryId])
   @@index([status])
   @@index([isExcludedFromBudget])
+  @@index([possibleDuplicateOfId])
 }
 
 model TransactionClassification {

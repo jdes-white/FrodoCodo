@@ -16,31 +16,43 @@ export interface TransactionFilters {
 }
 
 export async function listTransactions(householdId: string, filters: TransactionFilters = {}) {
-  const where: Prisma.TransactionWhereInput = {
-    account: { connection: { householdId } },
-  };
+  // Built as an AND-array of independent conditions rather than mutating a
+  // single `where` object, so `needsReviewOnly`'s own OR (uncategorized OR
+  // flagged-possible-duplicate) can never collide with `merchantQuery`'s OR
+  // — each filter contributes its own clause instead of overwriting a
+  // shared `where.OR` field.
+  const and: Prisma.TransactionWhereInput[] = [{ account: { connection: { householdId } } }];
 
-  if (filters.bucketId) where.category = { bucketId: filters.bucketId };
-  if (filters.categoryId) where.categoryId = filters.categoryId;
-  if (filters.accountId) where.accountId = filters.accountId;
+  if (filters.bucketId) and.push({ category: { bucketId: filters.bucketId } });
+  if (filters.categoryId) and.push({ categoryId: filters.categoryId });
+  if (filters.accountId) and.push({ accountId: filters.accountId });
   if (filters.merchantQuery) {
-    where.OR = [
-      { originalDescription: { contains: filters.merchantQuery, mode: "insensitive" } },
-      { merchant: { normalizedName: { contains: filters.merchantQuery, mode: "insensitive" } } },
-    ];
+    and.push({
+      OR: [
+        { originalDescription: { contains: filters.merchantQuery, mode: "insensitive" } },
+        { merchant: { normalizedName: { contains: filters.merchantQuery, mode: "insensitive" } } },
+      ],
+    });
   }
-  if (filters.needsReviewOnly) where.categoryId = null;
-  if (filters.reviewedOnly) where.categoryId = { not: null };
-  if (!filters.includeExcluded) where.isExcludedFromBudget = false;
+  // "Needs review" now covers two independent reasons a transaction needs
+  // household attention: uncategorized (the original meaning), or flagged
+  // by screenshot-import dedupe as a possible duplicate
+  // (Transaction.possibleDuplicateOfId, packages/ledger/src/screenshotDedupe.ts)
+  // — reusing this existing review queue rather than building a parallel one.
+  if (filters.needsReviewOnly) and.push({ OR: [{ categoryId: null }, { possibleDuplicateOfId: { not: null } }] });
+  if (filters.reviewedOnly) and.push({ categoryId: { not: null } });
+  if (!filters.includeExcluded) and.push({ isExcludedFromBudget: false });
   if (filters.startDate || filters.endDate) {
-    where.transactionDate = {
-      ...(filters.startDate ? { gte: new Date(filters.startDate) } : {}),
-      ...(filters.endDate ? { lte: new Date(filters.endDate) } : {}),
-    };
+    and.push({
+      transactionDate: {
+        ...(filters.startDate ? { gte: new Date(filters.startDate) } : {}),
+        ...(filters.endDate ? { lte: new Date(filters.endDate) } : {}),
+      },
+    });
   }
 
   return prisma.transaction.findMany({
-    where,
+    where: { AND: and },
     include: {
       account: { include: { connection: { include: { institution: true } } } },
       merchant: true,
@@ -60,6 +72,11 @@ export async function getTransactionDetail(householdId: string, transactionId: s
       category: { include: { bucket: true } },
       suggestedCategory: { include: { bucket: true } },
       classifications: { orderBy: { createdAt: "desc" }, include: { createdBy: true } },
+      // Screenshot-import dedupe review (packages/ledger/src/screenshotDedupe.ts)
+      // — only populated when possibleDuplicateOfId is set.
+      possibleDuplicateOf: {
+        select: { id: true, transactionDate: true, amount: true, originalDescription: true, merchant: { select: { normalizedName: true } } },
+      },
     },
   });
 }

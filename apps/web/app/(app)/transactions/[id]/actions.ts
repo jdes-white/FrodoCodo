@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { prisma, Prisma } from "@frodocodo/db";
 import { deriveLearnedMapping } from "@frodocodo/ledger";
 import { requireSession } from "@/lib/session";
@@ -280,4 +281,66 @@ export async function updateNotes(formData: FormData): Promise<void> {
   });
 
   revalidatePath(`/transactions/${transactionId}`);
+}
+
+/**
+ * Screenshot-import dedupe review (packages/ledger/src/screenshotDedupe.ts):
+ * the household confirms this transaction is genuinely separate from the
+ * one it was flagged as a possible duplicate of — just clears the flag,
+ * both rows stay exactly as they are.
+ */
+export async function keepAsSeparateTransaction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const transactionId = String(formData.get("transactionId"));
+
+  await prisma.transaction.updateMany({
+    where: { id: transactionId, account: { connection: { householdId: session.householdId } } },
+    data: { possibleDuplicateOfId: null },
+  });
+
+  await recordAuditEvent({
+    householdId: session.householdId,
+    actorUserId: session.userId,
+    action: "CONFIRM_NOT_DUPLICATE",
+    entityType: "Transaction",
+    entityId: transactionId,
+  });
+
+  revalidatePath(`/transactions/${transactionId}`);
+  revalidatePath("/transactions");
+}
+
+/**
+ * The household confirms this transaction IS the same real-world spend as
+ * the one it was flagged against — deletes this (the flagged, newer) row
+ * rather than the one it possibly duplicates, since the flagged row is
+ * always the one screenshot-import was unsure about adding.
+ */
+export async function markAsDuplicateTransaction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const transactionId = String(formData.get("transactionId"));
+
+  const transaction = await prisma.transaction.findFirst({
+    where: { id: transactionId, account: { connection: { householdId: session.householdId } }, possibleDuplicateOfId: { not: null } },
+    select: { id: true, possibleDuplicateOfId: true },
+  });
+  if (!transaction) {
+    revalidatePath("/transactions");
+    return;
+  }
+
+  await prisma.transaction.delete({ where: { id: transaction.id } });
+
+  await recordAuditEvent({
+    householdId: session.householdId,
+    actorUserId: session.userId,
+    action: "CONFIRM_DUPLICATE_REMOVED",
+    entityType: "Transaction",
+    entityId: transaction.id,
+    metadata: { keptTransactionId: transaction.possibleDuplicateOfId },
+  });
+
+  revalidatePath("/transactions");
+  revalidatePath("/");
+  redirect("/transactions");
 }

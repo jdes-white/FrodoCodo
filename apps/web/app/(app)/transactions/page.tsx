@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireSession } from "@/lib/session";
 import { listTransactions } from "@/lib/transactions";
 import { listCategoriesWithBuckets, listAccounts } from "@/lib/categories";
@@ -47,7 +48,12 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title="Transactions" />
+      <div className="flex items-center justify-between gap-3">
+        <PageHeader title="Transactions" />
+        <Link href="/import" className="shrink-0 text-sm font-medium" style={{ color: "var(--color-accent)" }}>
+          Import from screenshots
+        </Link>
+      </div>
       <MonthStepper
         month={month}
         otherParams={{

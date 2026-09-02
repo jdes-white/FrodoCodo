@@ -12,6 +12,7 @@ interface TransactionListItem {
   status: "PENDING" | "POSTED";
   merchant: { normalizedName: string } | null;
   category: { name: string; bucket: { name: string } } | null;
+  possibleDuplicateOfId?: string | null;
 }
 
 export function TransactionList({ transactions }: { transactions: TransactionListItem[] }) {
@@ -39,6 +40,7 @@ export function TransactionList({ transactions }: { transactions: TransactionLis
               {formatDate(tx.transactionDate)}
               {tx.category ? ` · ${tx.category.name}` : " · Needs review"}
               {tx.status === "PENDING" ? " · Pending" : ""}
+              {tx.possibleDuplicateOfId ? " · Possible duplicate" : ""}
             </p>
           </div>
           <p className="shrink-0 pl-2 text-sm font-semibold" style={{ color: tx.direction === "CREDIT" ? "var(--status-ahead)" : undefined }}>

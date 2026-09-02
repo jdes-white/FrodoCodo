@@ -5,7 +5,14 @@ import { requireSession } from "@/lib/session";
 import { getTransactionDetail } from "@/lib/transactions";
 import { listCategoriesWithBuckets } from "@/lib/categories";
 import { fromPrismaDecimal } from "@/lib/decimal";
-import { reclassifyTransaction, setExcludedFromBudget, markAsTransfer, updateNotes } from "./actions";
+import {
+  reclassifyTransaction,
+  setExcludedFromBudget,
+  markAsTransfer,
+  updateNotes,
+  keepAsSeparateTransaction,
+  markAsDuplicateTransaction,
+} from "./actions";
 import { Card } from "@/components/Card";
 import { CategoryIcon } from "@/components/CategoryIcon";
 
@@ -58,6 +65,41 @@ export default async function TransactionDetailPage({ params }: { params: Promis
           )}
         </dl>
       </Card>
+
+      {transaction.possibleDuplicateOf && (
+        <Card as="section">
+          <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--status-behind)" }}>
+            Possible duplicate
+          </h2>
+          <p className="mb-3 text-sm" style={{ color: "var(--color-text-muted)" }}>
+            This looks similar to another transaction:{" "}
+            <span className="font-medium">
+              {transaction.possibleDuplicateOf.merchant?.normalizedName ?? transaction.possibleDuplicateOf.originalDescription}
+            </span>{" "}
+            for {formatAUD(fromPrismaDecimal(transaction.possibleDuplicateOf.amount))} on{" "}
+            {new Date(transaction.possibleDuplicateOf.transactionDate).toLocaleDateString("en-AU")}. Is this the same
+            transaction, or two separate ones?
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <form action={keepAsSeparateTransaction}>
+              <input type="hidden" name="transactionId" value={transaction.id} />
+              <button type="submit" className="rounded-lg border px-3 py-1.5 text-sm" style={{ borderColor: "var(--color-border)" }}>
+                These are separate
+              </button>
+            </form>
+            <form action={markAsDuplicateTransaction}>
+              <input type="hidden" name="transactionId" value={transaction.id} />
+              <button
+                type="submit"
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-white"
+                style={{ background: "var(--status-behind)" }}
+              >
+                This is a duplicate — remove it
+              </button>
+            </form>
+          </div>
+        </Card>
+      )}
 
       <Card as="section">
         <h2 className="mb-3 text-sm font-medium">Reclassify</h2>

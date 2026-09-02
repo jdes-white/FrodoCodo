@@ -2,6 +2,16 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  experimental: {
+    // Batch screenshot import (apps/web/app/(app)/import) submits a whole
+    // multi-file selection as one Server Action call — Next's default 1MB
+    // body limit is far too small for even a handful of phone photos.
+    // Screenshots are read from this request body directly into memory
+    // and never written to disk (see apps/web/lib/screenshotImport.ts), so
+    // raising this limit doesn't create a new storage surface, just a
+    // larger single in-memory request.
+    serverActions: { bodySizeLimit: "50mb" },
+  },
   // Prisma's generated client resolves its native query-engine binary via
   // a runtime fs read computed from the OS/libc target — Prisma's own
   // recommendation for Next.js is to declare it external so webpack leaves

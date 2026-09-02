@@ -216,6 +216,12 @@ export async function syncConnection(provider: FinancialDataProvider, connection
 }
 
 /**
+ * Exported (not just used internally by `syncConnection` above) so the
+ * batch screenshot-import pipeline (`apps/web/lib/screenshotImport.ts`)
+ * can call it too, after inserting its own transactions — the same
+ * transfer/reversal/refund reconciliation must run regardless of which
+ * ingestion path produced the new rows.
+ *
  * Re-runs the real ledger reconciliation logic (not a re-implementation)
  * across the household's transactions, in a deliberate order — a
  * transaction can be at most one of: transfer leg, reversal leg, or refund
@@ -227,7 +233,7 @@ export async function syncConnection(provider: FinancialDataProvider, connection
  * loosest match: same account, merchant-matched, wider window, credit ≤
  * original).
  */
-async function reconcileTransferReversalsAndRefunds(householdId: string): Promise<void> {
+export async function reconcileTransferReversalsAndRefunds(householdId: string): Promise<void> {
   const transactions = await prisma.transaction.findMany({
     where: { account: { connection: { householdId } }, isTransfer: false, isReversal: false },
     include: { account: true, merchant: true },
