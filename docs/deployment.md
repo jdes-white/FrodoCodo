@@ -376,14 +376,15 @@ from the Vercel period. It is:
 | `AI_PROVIDER` | No (default `stub`) | Left as `stub` for the beta |
 | `BASIQ_API_KEY` | Not currently required | Only if `FINANCIAL_PROVIDER=basiq` — see `docs/basiq-integration.md` first; the adapter exists (Task 7A) but has never been connected to a live account |
 | `APP_ENCRYPTION_KEY` | Not currently required | Required before `FINANCIAL_PROVIDER=basiq` is ever set for real — encrypts a real provider connection's access/refresh token at rest (`packages/db/src/payloadEncryption.ts`); `encryptForStorage()` throws in production without it rather than persisting a token unencrypted |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | Not currently required | Only if `AI_PROVIDER=anthropic` |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | No (secret, owner-supplied — only takes effect once `AI_PROVIDER=anthropic`) | Declared `sync: false` in `render.yaml` so Render recognizes and preserves a dashboard-entered value across a blueprint sync, same as `DATABASE_URL`/`DIRECT_URL`; screenshot import (`apps/web/lib/screenshotImport.ts`) needs both this key *and* `AI_PROVIDER=anthropic` to read a real screenshot rather than failing closed |
 | `WORKER_SYNC_INTERVAL_MINUTES` | Not currently required | Only relevant if `apps/worker` is ever deployed as its own service |
 
 `render.yaml` declares all of the Render-relevant rows above.
-`DATABASE_URL` and `DIRECT_URL` are marked `sync: false` (Render prompts
-for each in the dashboard; nothing is committed) — `AUTH_SECRET` and
-`SEED_TOKEN` use `generateValue: true` instead, so the owner never has to
-source or paste those two at all.
+`DATABASE_URL`, `DIRECT_URL`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_MODEL`
+are marked `sync: false` (Render prompts for each in the dashboard;
+nothing is committed) — `AUTH_SECRET` and `SEED_TOKEN` use
+`generateValue: true` instead, so the owner never has to source or paste
+those two at all.
 
 ## Render deployment
 

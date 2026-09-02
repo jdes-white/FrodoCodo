@@ -82,8 +82,32 @@ services:
         value: production
       - key: FINANCIAL_PROVIDER
         value: mock
+      # AI_PROVIDER stays "stub" by deliberate default — CLAUDE.md rule 8
+      # ("AI is an enhancement, never a dependency for core operation") and
+      # docs/deployment.md's "Future architecture awareness" section both
+      # document this as an intentional beta choice, not an oversight.
+      # Flipping it to "anthropic" is a product decision for the owner to
+      # make explicitly (it adds a paid external dependency), not something
+      # this blueprint should default to on its own — see the two keys
+      # below for what else that flip requires.
       - key: AI_PROVIDER
         value: stub
+      # ANTHROPIC_API_KEY / ANTHROPIC_MODEL: only take effect once
+      # AI_PROVIDER is switched to "anthropic" above (see
+      # apps/web/lib/screenshotExtractorFactory.ts's gate) — needed for
+      # screenshot import (apps/web/lib/screenshotImport.ts) to actually
+      # read a real banking screenshot rather than failing closed with
+      # "no AI vision provider is configured". Declared here as `sync:
+      # false` (same pattern as DATABASE_URL/DIRECT_URL above) so Render
+      # recognizes and preserves a dashboard-entered value across a
+      # blueprint sync instead of it being an undeclared, unprotected
+      # variable — this does not itself enable anthropic; AI_PROVIDER
+      # above still has to be switched too, and a real key value still has
+      # to be pasted into the Render dashboard (never commit one here).
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false
       # --- Not currently required — left unset intentionally ---
       # BASIQ_API_KEY: only if FINANCIAL_PROVIDER=basiq (see
       #   docs/basiq-integration.md before ever setting this — the adapter
@@ -93,6 +117,5 @@ services:
       #   connection's provider token must be encrypted at rest
       #   (docs/basiq-integration.md), and encryptForStorage() throws in
       #   production without this key rather than persisting one unencrypted.
-      # ANTHROPIC_API_KEY / ANTHROPIC_MODEL: only if AI_PROVIDER=anthropic.
       # WORKER_SYNC_INTERVAL_MINUTES: only relevant if apps/worker is ever
       #   deployed as its own service.
