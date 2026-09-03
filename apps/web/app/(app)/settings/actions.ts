@@ -9,6 +9,7 @@ import { requireAdmin, getCurrentUser } from "@/lib/session";
 import { recordAuditEvent } from "@/lib/audit";
 import { findExistingBasiqUserId, applyConsentStatus, completeConnectionSync } from "@/lib/basiqConnect";
 import { signConnectState, CONNECT_STATE_COOKIE_NAME, CONNECT_STATE_COOKIE_MAX_AGE_SECONDS } from "@/lib/basiqConnectState";
+import { recategorizeScreenshotImportBatch, type RecategorizationSummary } from "@/lib/recategorizeScreenshotBatch";
 
 /** Account inclusion/exclusion is admin-only (§5). */
 export async function setAccountIncluded(formData: FormData): Promise<void> {
@@ -201,4 +202,20 @@ export async function disconnectInstitution(formData: FormData): Promise<void> {
   });
 
   revalidatePath("/settings");
+}
+
+/**
+ * TEMPORARY, ONE-OFF — see `@/lib/recategorizeScreenshotBatch`'s doc
+ * comment. Admin-only (§5/§11), same as every other mutation on this page.
+ * Called directly from a client component (not a `<form action>`) so the
+ * result can be shown inline immediately, without a page reload — this is
+ * a maintenance report, not a navigation.
+ */
+export async function runScreenshotBatchRecategorization(): Promise<RecategorizationSummary> {
+  const session = await requireAdmin();
+  const summary = await recategorizeScreenshotImportBatch(session.householdId);
+  revalidatePath("/transactions");
+  revalidatePath("/");
+  revalidatePath("/insights");
+  return summary;
 }
