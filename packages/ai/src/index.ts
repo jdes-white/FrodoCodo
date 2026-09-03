@@ -4,3 +4,4 @@ export * from "./stubGateway.js";
 export * from "./anthropicGateway.js";
 export * from "./financialIntelligenceService.js";
 export * from "./screenshotExtraction.js";
+export * from "./categorySuggestion.js";

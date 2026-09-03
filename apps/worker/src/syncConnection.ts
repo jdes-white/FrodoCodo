@@ -1,10 +1,10 @@
 import { prisma } from "@frodocodo/db";
-import { toMoney, formatCalendarDate } from "@frodocodo/shared";
+import { toMoney, formatCalendarDate, type ClassificationSource } from "@frodocodo/shared";
 import {
   normalizeMerchant,
   resolveDedupe,
-  classifyDeterministic,
-  resolveClassification,
+  planCategorySuggestionBatch,
+  finalizeCategoryBatch,
   detectTransferPairs,
   detectReversals,
   detectRefunds,
@@ -12,6 +12,7 @@ import {
   type ExistingTransactionRef,
 } from "@frodocodo/ledger";
 import type { FinancialDataProvider } from "@frodocodo/providers";
+import type { CategorySuggestionBatchExtractor } from "@frodocodo/ai";
 
 /**
  * Runs one connection's incremental sync through the real pipeline (§7,
@@ -30,7 +31,11 @@ import type { FinancialDataProvider } from "@frodocodo/providers";
  * side effects (unlike `index.ts`, which starts the interval loop), so
  * importing it is always safe.
  */
-export async function syncConnection(provider: FinancialDataProvider, connectionId: string): Promise<void> {
+export async function syncConnection(
+  provider: FinancialDataProvider,
+  connectionId: string,
+  categorySuggestionExtractor: CategorySuggestionBatchExtractor,
+): Promise<void> {
   const connection = await prisma.financialConnection.findUniqueOrThrow({
     where: { id: connectionId },
     include: { accounts: true },
@@ -68,6 +73,12 @@ export async function syncConnection(provider: FinancialDataProvider, connection
     for (const providerError of result.errors) {
       errors.push(`${providerError.code}: ${providerError.message}`);
     }
+
+    // Collected here, then classified and inserted in one batch after this
+    // loop — see the batch-classification block below for why (Layer 4/AI
+    // categorisation needs the whole batch's unresolved merchants at once,
+    // not one at a time).
+    const toCreate: Array<{ ingestible: ReturnType<typeof toIngestibleTransactionFields>; accountId: string }> = [];
 
     for (const tx of result.transactions) {
       const account = accountByProviderId.get(tx.accountProviderId);
@@ -130,66 +141,65 @@ export async function syncConnection(provider: FinancialDataProvider, connection
         continue;
       }
 
-      const merchant = normalizeMerchant(ingestible.originalDescription);
-      const merchantRow = await prisma.merchant.upsert({
-        where: { householdId_matchKey: { householdId: connection.householdId, matchKey: merchant.matchKey } },
-        update: {},
-        create: { householdId: connection.householdId, normalizedName: merchant.normalizedName, matchKey: merchant.matchKey },
-      });
+      toCreate.push({ ingestible, accountId: account.id });
+    }
 
-      const rule = await prisma.merchantRule.findUnique({
-        where: { householdId_merchantId: { householdId: connection.householdId, merchantId: merchantRow.id } },
-      });
-      const deterministic = classifyDeterministic({
-        merchantRule: rule ? { categoryId: rule.categoryId, ruleId: rule.id } : undefined,
-        learnedMapping: merchantRow.defaultCategoryId ? { categoryId: merchantRow.defaultCategoryId, confidence: 0.85 } : undefined,
-      });
-      // AI suggestion stays out of the real ingestion path deliberately —
-      // only the deterministic layers (rule / learned mapping; provider
-      // enrichment stays unwired until a real provider exists) ever feed
-      // resolveClassification here. See docs/financial-calculation-rules.md
-      // and the categorisation audit for why this is intentional for now.
-      const classification = resolveClassification(deterministic, null);
+    if (toCreate.length > 0) {
+      const classifications = await classifyTransactionBatch(
+        connection.householdId,
+        toCreate.map((c, idx) => ({
+          key: String(idx),
+          originalDescription: c.ingestible.originalDescription,
+          amount: c.ingestible.amount.toString(),
+          direction: c.ingestible.direction,
+        })),
+        categorySuggestionExtractor,
+      );
 
-      await prisma.transaction.create({
-        data: {
-          accountId: account.id,
-          providerTransactionId: ingestible.providerTransactionId,
-          transactionDate: new Date(ingestible.transactionDate),
-          postingDate: ingestible.postingDate ? new Date(ingestible.postingDate) : null,
-          amount: ingestible.amount.toNumber(),
-          direction: ingestible.direction,
-          status: ingestible.status,
-          originalDescription: ingestible.originalDescription,
-          sourceType: ingestible.sourceType,
-          reversalOfProviderTransactionId: ingestible.reversalOfProviderTransactionId,
-          normalizedMerchantId: merchantRow.id,
-          merchantConfidence: merchant.confidence,
-          categoryId: classification.status === "CLASSIFIED" ? classification.categoryId : null,
-          classificationConfidence: classification.status === "CLASSIFIED" ? classification.confidence : null,
-          classificationSource: classification.status === "CLASSIFIED" ? classification.source : null,
-          // When nothing cleared the auto-classify threshold, keep whatever
-          // best guess the deterministic layer had (if any) as a hint for
-          // the reclassify UI — the transaction is still unambiguously
-          // uncategorised (categoryId above stays null) until a human
-          // confirms it.
-          suggestedCategoryId: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessCategoryId ?? null) : null,
-          suggestedCategorySource: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessSource ?? null) : null,
-          suggestedCategoryConfidence: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessConfidence ?? null) : null,
-          syncRunId: syncRun.id,
-          // No rawProviderPayload field exists anymore (Task 6B): the
-          // provider's raw response for this transaction (tx.raw) was
-          // already discarded above once `ingestible` was built from it —
-          // data FrodoCodo never retains cannot later leak, which is a
-          // stronger guarantee than encrypting it at rest ever was (the H3
-          // encryption utility, packages/db/src/payloadEncryption.ts,
-          // remains available as a general-purpose utility for other
-          // sensitive-at-rest data, e.g. a future provider access token —
-          // see docs/banking-data-minimisation-audit.md §8 — but nothing
-          // in the transaction ingestion path uses it anymore).
-        },
-      });
-      imported++;
+      for (let idx = 0; idx < toCreate.length; idx++) {
+        const { ingestible, accountId } = toCreate[idx]!;
+        const classification = classifications.get(String(idx))!;
+
+        await prisma.transaction.create({
+          data: {
+            accountId,
+            providerTransactionId: ingestible.providerTransactionId,
+            transactionDate: new Date(ingestible.transactionDate),
+            postingDate: ingestible.postingDate ? new Date(ingestible.postingDate) : null,
+            amount: ingestible.amount.toNumber(),
+            direction: ingestible.direction,
+            status: ingestible.status,
+            originalDescription: ingestible.originalDescription,
+            sourceType: ingestible.sourceType,
+            reversalOfProviderTransactionId: ingestible.reversalOfProviderTransactionId,
+            normalizedMerchantId: classification.merchantId,
+            merchantConfidence: classification.merchantConfidence,
+            categoryId: classification.categoryId,
+            classificationConfidence: classification.classificationConfidence,
+            classificationSource: classification.classificationSource,
+            // When nothing cleared the auto-classify threshold, keep whatever
+            // best guess the deterministic/AI layers had (if any) as a hint
+            // for the reclassify UI — the transaction is still unambiguously
+            // uncategorised (categoryId above stays null) until a human
+            // confirms it.
+            suggestedCategoryId: classification.suggestedCategoryId,
+            suggestedCategorySource: classification.suggestedCategorySource,
+            suggestedCategoryConfidence: classification.suggestedCategoryConfidence,
+            syncRunId: syncRun.id,
+            // No rawProviderPayload field exists anymore (Task 6B): the
+            // provider's raw response for this transaction (tx.raw) was
+            // already discarded above once `ingestible` was built from it —
+            // data FrodoCodo never retains cannot later leak, which is a
+            // stronger guarantee than encrypting it at rest ever was (the H3
+            // encryption utility, packages/db/src/payloadEncryption.ts,
+            // remains available as a general-purpose utility for other
+            // sensitive-at-rest data, e.g. a future provider access token —
+            // see docs/banking-data-minimisation-audit.md §8 — but nothing
+            // in the transaction ingestion path uses it anymore).
+          },
+        });
+        imported++;
+      }
     }
 
     await reconcileTransferReversalsAndRefunds(connection.householdId);
@@ -213,6 +223,143 @@ export async function syncConnection(provider: FinancialDataProvider, connection
     });
     throw err;
   }
+}
+
+export interface ClassifiableTransactionInput {
+  /** Caller-defined correlation key — the batch orchestrator's own index/id scheme, returned unchanged in the result map. */
+  key: string;
+  originalDescription: string;
+  /** Positive decimal string — a magnitude, never signed. */
+  amount: string;
+  direction: "DEBIT" | "CREDIT";
+}
+
+export interface BatchedClassificationResult {
+  merchantId: string;
+  merchantNormalizedName: string;
+  merchantConfidence: number;
+  categoryId: string | null;
+  classificationConfidence: number | null;
+  classificationSource: ClassificationSource | null;
+  suggestedCategoryId: string | null;
+  suggestedCategorySource: ClassificationSource | null;
+  suggestedCategoryConfidence: number | null;
+}
+
+/**
+ * The one shared entry point BOTH real-provider sync (`syncConnection`
+ * above) and screenshot import (`apps/web/lib/screenshotImport.ts`) call to
+ * turn a batch of freshly-deduplicated, not-yet-persisted transactions into
+ * final categorisation fields — including Layer 4 (AI), which previously
+ * didn't exist anywhere in the codebase (every call site passed `null` for
+ * `resolveClassification`'s AI argument; see the production categorisation
+ * diagnosis this closes). Exported for exactly that reuse, the same pattern
+ * `reconcileTransferReversalsAndRefunds` below already established for
+ * post-insert reconciliation.
+ *
+ * The actual decision logic — which merchants need an AI opinion at all,
+ * and how a returned opinion combines with the existing deterministic
+ * layers — lives in `packages/ledger/src/categoryBatchClassification.ts` as
+ * pure functions (`planCategorySuggestionBatch` / `finalizeCategoryBatch`);
+ * this function is only the DB-touching shell around them: normalize +
+ * upsert merchants, fetch rules/categories, call the injected AI extractor
+ * once for the whole batch's deduplicated unresolved merchants, then map
+ * results back per input `key`.
+ *
+ * `categorySuggestionExtractor` is injected (never resolved internally),
+ * the same DI pattern `ScreenshotVisionExtractor` already uses — production
+ * callers pass `getCategorySuggestionExtractor()` (each app keeps its own
+ * copy of that small env-gated factory: `apps/web/lib/categorySuggestionFactory.ts`
+ * / `apps/worker/src/categorySuggestionFactory.ts`), tests inject a fake.
+ * A throwing extractor is treated exactly like "no suggestions" — an
+ * Anthropic outage must never block a sync or a screenshot import.
+ */
+export async function classifyTransactionBatch(
+  householdId: string,
+  items: ClassifiableTransactionInput[],
+  categorySuggestionExtractor: CategorySuggestionBatchExtractor,
+): Promise<Map<string, BatchedClassificationResult>> {
+  const results = new Map<string, BatchedClassificationResult>();
+  if (items.length === 0) return results;
+
+  interface MerchantInfo {
+    id: string;
+    normalizedName: string;
+    defaultCategoryId: string | null;
+  }
+  const normalizedByKey = new Map<string, { matchKey: string; normalizedName: string; confidence: number }>();
+  const merchantByMatchKey = new Map<string, MerchantInfo>();
+
+  for (const item of items) {
+    const merchant = normalizeMerchant(item.originalDescription);
+    normalizedByKey.set(item.key, merchant);
+    if (!merchantByMatchKey.has(merchant.matchKey)) {
+      const row = await prisma.merchant.upsert({
+        where: { householdId_matchKey: { householdId, matchKey: merchant.matchKey } },
+        update: {},
+        create: { householdId, normalizedName: merchant.normalizedName, matchKey: merchant.matchKey },
+      });
+      merchantByMatchKey.set(merchant.matchKey, { id: row.id, normalizedName: row.normalizedName, defaultCategoryId: row.defaultCategoryId });
+    }
+  }
+
+  const merchantIds = [...new Set([...merchantByMatchKey.values()].map((m) => m.id))];
+  const rules = await prisma.merchantRule.findMany({ where: { householdId, merchantId: { in: merchantIds } } });
+  const ruleByMerchantId = new Map(rules.map((r) => [r.merchantId, r]));
+
+  const batchItems = items.map((item) => {
+    const merchant = normalizedByKey.get(item.key)!;
+    const merchantInfo = merchantByMatchKey.get(merchant.matchKey)!;
+    const rule = ruleByMerchantId.get(merchantInfo.id);
+    return {
+      key: item.key,
+      matchKey: merchant.matchKey,
+      merchantName: merchant.normalizedName,
+      amount: item.amount,
+      direction: item.direction,
+      merchantRule: rule ? { categoryId: rule.categoryId, ruleId: rule.id } : undefined,
+      learnedMapping: merchantInfo.defaultCategoryId ? { categoryId: merchantInfo.defaultCategoryId, confidence: 0.85 } : undefined,
+    };
+  });
+
+  const { deterministicByKey, requests } = planCategorySuggestionBatch(batchItems);
+
+  let aiAnswersByMatchKey = new Map<string, { categoryId: string; confidence: number } | null>();
+  let allowedCategoryIds = new Set<string>();
+  if (requests.length > 0) {
+    const categories = await prisma.category.findMany({ where: { householdId, isArchived: false }, select: { id: true, name: true } });
+    allowedCategoryIds = new Set(categories.map((c) => c.id));
+    if (categories.length > 0) {
+      try {
+        aiAnswersByMatchKey = await categorySuggestionExtractor(requests, categories);
+      } catch {
+        // Anthropic failure must never block sync/import — every unresolved
+        // merchant just stays unresolved, same as AI_PROVIDER=stub.
+        aiAnswersByMatchKey = new Map();
+      }
+    }
+  }
+
+  const outcomes = finalizeCategoryBatch(batchItems, deterministicByKey, aiAnswersByMatchKey, allowedCategoryIds);
+
+  for (const item of items) {
+    const merchant = normalizedByKey.get(item.key)!;
+    const merchantInfo = merchantByMatchKey.get(merchant.matchKey)!;
+    const classification = outcomes.get(item.key)!;
+    results.set(item.key, {
+      merchantId: merchantInfo.id,
+      merchantNormalizedName: merchant.normalizedName,
+      merchantConfidence: merchant.confidence,
+      categoryId: classification.status === "CLASSIFIED" ? classification.categoryId : null,
+      classificationConfidence: classification.status === "CLASSIFIED" ? classification.confidence : null,
+      classificationSource: classification.status === "CLASSIFIED" ? classification.source : null,
+      suggestedCategoryId: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessCategoryId ?? null) : null,
+      suggestedCategorySource: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessSource ?? null) : null,
+      suggestedCategoryConfidence: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessConfidence ?? null) : null,
+    });
+  }
+
+  return results;
 }
 
 /**

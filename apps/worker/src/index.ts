@@ -2,6 +2,7 @@ import { prisma } from "@frodocodo/db";
 import { getProvider } from "./provider.js";
 import { syncConnection } from "./syncConnection.js";
 import { generateInsightsForHousehold } from "./generateInsights.js";
+import { getCategorySuggestionExtractor } from "./categorySuggestionFactory.js";
 
 /**
  * Background sync/insight worker (§35 notification & ingestion layers).
@@ -19,11 +20,12 @@ const SYNC_INTERVAL_MS = Number(process.env.WORKER_SYNC_INTERVAL_MINUTES ?? 60) 
 
 async function runSyncCycle(): Promise<void> {
   const provider = getProvider();
+  const categorySuggestionExtractor = getCategorySuggestionExtractor();
   const connections = await prisma.financialConnection.findMany({ where: { isActive: true } });
 
   for (const connection of connections) {
     try {
-      await syncConnection(provider, connection.id);
+      await syncConnection(provider, connection.id, categorySuggestionExtractor);
       console.log(`[worker] synced connection ${connection.id}`);
     } catch (err) {
       console.error(`[worker] sync failed for connection ${connection.id}:`, err);

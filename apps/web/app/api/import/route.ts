@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { requireSession } from "@/lib/session";
 import { importScreenshotBatch, type ScreenshotFileInput } from "@/lib/screenshotImport";
 import { getScreenshotVisionExtractor } from "@/lib/screenshotExtractorFactory";
+import { getCategorySuggestionExtractor } from "@/lib/categorySuggestionFactory";
 
 /**
  * Batch screenshot transaction import. Deliberately a Route Handler, not a
@@ -65,7 +66,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     const extractor = getScreenshotVisionExtractor();
-    const summary = await importScreenshotBatch(inputs, session.householdId, session.userId, extractor);
+    const categorySuggestionExtractor = getCategorySuggestionExtractor();
+    const summary = await importScreenshotBatch(inputs, session.householdId, session.userId, extractor, categorySuggestionExtractor);
 
     revalidatePath("/transactions");
     revalidatePath("/");

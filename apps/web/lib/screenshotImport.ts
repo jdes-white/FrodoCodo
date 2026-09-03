@@ -5,15 +5,12 @@ import {
   deriveDefaultAccountAlias,
   toIngestibleAccountFields,
   toIngestibleTransactionFields,
-  normalizeMerchant,
-  classifyDeterministic,
-  resolveClassification,
   resolveScreenshotBatch,
   type ScreenshotDedupeCandidate,
   type ScreenshotDedupeExisting,
 } from "@frodocodo/ledger";
-import type { ScreenshotSource, ScreenshotVisionExtractor, ExtractedTransactionCandidate } from "@frodocodo/ai";
-import { reconcileTransferReversalsAndRefunds } from "@frodocodo/worker";
+import type { ScreenshotSource, ScreenshotVisionExtractor, ExtractedTransactionCandidate, CategorySuggestionBatchExtractor } from "@frodocodo/ai";
+import { reconcileTransferReversalsAndRefunds, classifyTransactionBatch, type BatchedClassificationResult } from "@frodocodo/worker";
 import { recordAuditEvent } from "./audit";
 import { sanitizeScreenshot } from "./screenshotSanitizer";
 
@@ -112,6 +109,7 @@ export async function importScreenshotBatch(
   householdId: string,
   actorUserId: string,
   extractor: ScreenshotVisionExtractor,
+  categorySuggestionExtractor: CategorySuggestionBatchExtractor,
 ): Promise<ScreenshotImportSummary> {
   const todayIso = formatCalendarDate(new Date());
 
@@ -249,6 +247,9 @@ export async function importScreenshotBatch(
   let needsReview = 0;
   const createdIdByCandidateIndex = new Map<number, string>();
   const deferredSkipOfCandidate: number[] = [];
+  // Candidates that will actually become a row — classified as one batch
+  // (Layer 4/AI categorisation) below, before any of them are inserted.
+  const toCreate: Array<{ index: number; possibleDuplicateOfExistingId: string | null }> = [];
 
   for (let i = 0; i < outcomes.length; i++) {
     const outcome = outcomes[i]!;
@@ -278,14 +279,29 @@ export async function importScreenshotBatch(
       continue;
     }
 
-    const id = await createScreenshotTransaction(
+    toCreate.push({ index: i, possibleDuplicateOfExistingId: outcome.action === "NEEDS_REVIEW" ? (outcome.possibleDuplicateOfExistingId ?? null) : null });
+  }
+
+  if (toCreate.length > 0) {
+    const classifications = await classifyTransactionBatch(
       householdId,
-      candidate,
-      outcome.action === "NEEDS_REVIEW" ? (outcome.possibleDuplicateOfExistingId ?? null) : null,
+      toCreate.map(({ index }) => {
+        const candidate = built[index]!;
+        return { key: String(index), originalDescription: candidate.description, amount: candidate.amount.toString(), direction: candidate.direction };
+      }),
+      categorySuggestionExtractor,
     );
-    createdIdByCandidateIndex.set(i, id);
-    if (outcome.action === "NEEDS_REVIEW" || candidate.needsExtractionReview) needsReview++;
-    else newTransactions++;
+
+    for (const { index, possibleDuplicateOfExistingId } of toCreate) {
+      const candidate = built[index]!;
+      const outcome = outcomes[index]!;
+      const classification = classifications.get(String(index))!;
+
+      const id = await createScreenshotTransaction(candidate, classification, possibleDuplicateOfExistingId);
+      createdIdByCandidateIndex.set(index, id);
+      if (outcome.action === "NEEDS_REVIEW" || candidate.needsExtractionReview) needsReview++;
+      else newTransactions++;
+    }
   }
 
   for (const i of deferredSkipOfCandidate) {
@@ -408,10 +424,18 @@ interface ScreenshotTransactionInput {
   needsExtractionReview: boolean;
 }
 
-/** Same normalize -> classify -> create sequence `apps/worker/src/syncConnection.ts` uses for a live sync, applied to one screenshot-sourced row. */
+/**
+ * Same normalize -> classify -> create sequence `apps/worker/src/syncConnection.ts`
+ * uses for a live sync, applied to one screenshot-sourced row — except
+ * classification (merchant/rule/learned-mapping/AI) is no longer computed
+ * per row here. It's pre-computed for the whole batch by the shared
+ * `classifyTransactionBatch` (`@frodocodo/worker`) and simply passed in,
+ * so Layer 4 (AI) gets one batched call across every unresolved merchant in
+ * the upload instead of one call per row.
+ */
 async function createScreenshotTransaction(
-  householdId: string,
   input: ScreenshotTransactionInput,
+  classification: BatchedClassificationResult,
   possibleDuplicateOfId: string | null,
 ): Promise<string> {
   const ingestible = toIngestibleTransactionFields({
@@ -426,21 +450,6 @@ async function createScreenshotTransaction(
     sourceType: "SCREENSHOT_IMPORT",
   });
 
-  const merchant = normalizeMerchant(ingestible.originalDescription);
-  const merchantRow = await prisma.merchant.upsert({
-    where: { householdId_matchKey: { householdId, matchKey: merchant.matchKey } },
-    update: {},
-    create: { householdId, normalizedName: merchant.normalizedName, matchKey: merchant.matchKey },
-  });
-  const rule = await prisma.merchantRule.findUnique({
-    where: { householdId_merchantId: { householdId, merchantId: merchantRow.id } },
-  });
-  const deterministic = classifyDeterministic({
-    merchantRule: rule ? { categoryId: rule.categoryId, ruleId: rule.id } : undefined,
-    learnedMapping: merchantRow.defaultCategoryId ? { categoryId: merchantRow.defaultCategoryId, confidence: 0.85 } : undefined,
-  });
-  const classification = resolveClassification(deterministic, null);
-
   const created = await prisma.transaction.create({
     data: {
       accountId: input.accountId,
@@ -452,14 +461,14 @@ async function createScreenshotTransaction(
       status: ingestible.status,
       originalDescription: ingestible.originalDescription,
       sourceType: ingestible.sourceType,
-      normalizedMerchantId: merchantRow.id,
-      merchantConfidence: merchant.confidence,
-      categoryId: classification.status === "CLASSIFIED" ? classification.categoryId : null,
-      classificationConfidence: classification.status === "CLASSIFIED" ? classification.confidence : null,
-      classificationSource: classification.status === "CLASSIFIED" ? classification.source : null,
-      suggestedCategoryId: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessCategoryId ?? null) : null,
-      suggestedCategorySource: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessSource ?? null) : null,
-      suggestedCategoryConfidence: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessConfidence ?? null) : null,
+      normalizedMerchantId: classification.merchantId,
+      merchantConfidence: classification.merchantConfidence,
+      categoryId: classification.categoryId,
+      classificationConfidence: classification.classificationConfidence,
+      classificationSource: classification.classificationSource,
+      suggestedCategoryId: classification.suggestedCategoryId,
+      suggestedCategorySource: classification.suggestedCategorySource,
+      suggestedCategoryConfidence: classification.suggestedCategoryConfidence,
       possibleDuplicateOfId,
       needsExtractionReview: input.needsExtractionReview,
     },

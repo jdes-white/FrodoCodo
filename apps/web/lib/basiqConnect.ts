@@ -3,6 +3,7 @@ import { prisma } from "@frodocodo/db";
 import { deriveDefaultAccountAlias, toIngestibleAccountFields } from "@frodocodo/ledger";
 import { getBasiqUserIdFromConnectionId, type ConsentInfo, type FinancialDataProvider } from "@frodocodo/providers";
 import { syncConnection } from "@frodocodo/worker";
+import { getCategorySuggestionExtractor } from "./categorySuggestionFactory";
 
 /**
  * Task 7C — the DB-touching half of the live-connection flow (the
@@ -119,5 +120,5 @@ export async function completeConnectionSync(
   institutionShortName: string,
 ): Promise<void> {
   await establishAccountsForConnection(provider, connectionId, householdId, institutionShortName);
-  await syncConnection(provider, connectionId);
+  await syncConnection(provider, connectionId, getCategorySuggestionExtractor());
 }
