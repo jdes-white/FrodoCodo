@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseCategorySuggestionResponse,
+  diagnoseCategorySuggestionResponse,
   createAnthropicCategorySuggestionExtractor,
   createStubCategorySuggestionExtractor,
   type CategorySuggestionInput,
@@ -83,6 +84,55 @@ describe("parseCategorySuggestionResponse — validation and safety", () => {
     const text = JSON.stringify({ suggestions: [{ key: "kfc", categoryId: null, confidence: 0.1 }] });
     const result = parseCategorySuggestionResponse(text, ITEMS, CATEGORIES);
     expect(result.get("kfc")).toBeNull();
+  });
+});
+
+describe("diagnoseCategorySuggestionResponse — production failure-mode breakdown", () => {
+  it("reports jsonParsed:false for unparseable text (distinct from every other failure mode)", () => {
+    const d = diagnoseCategorySuggestionResponse("not json at all", ITEMS, CATEGORIES);
+    expect(d).toMatchObject({ jsonParsed: false, schemaValid: false, rowCount: 0, validRowCount: 0 });
+  });
+
+  it("reports jsonParsed:true, schemaValid:false for valid JSON that doesn't match the top-level shape", () => {
+    const d = diagnoseCategorySuggestionResponse(JSON.stringify({ foo: "bar" }), ITEMS, CATEGORIES);
+    expect(d).toMatchObject({ jsonParsed: true, schemaValid: false, rowCount: 0 });
+  });
+
+  it("counts a truncated response (valid JSON prefix, cut off mid-array) as a parse failure, not a confidence problem", () => {
+    // Simulates a response cut off by max_tokens: the object never closes.
+    const truncated = '{"suggestions": [{"key": "kfc", "categoryId": "cat_food", "confidence": 0.9}, {"key": "woolwo';
+    const d = diagnoseCategorySuggestionResponse(truncated, ITEMS, CATEGORIES);
+    expect(d.jsonParsed).toBe(false);
+  });
+
+  it("distinguishes unknown-key, null-category, and invalid-category rejections from genuinely valid rows", () => {
+    const text = JSON.stringify({
+      suggestions: [
+        { key: "kfc", categoryId: "cat_food", confidence: 0.9 }, // valid, >= threshold
+        { key: "woolworths", categoryId: "cat_groceries", confidence: 0.5 }, // valid, below threshold
+        { key: "not-a-real-item", categoryId: "cat_food", confidence: 0.9 }, // unknown key
+      ],
+    });
+    const d = diagnoseCategorySuggestionResponse(text, ITEMS, CATEGORIES, 0.8);
+    expect(d).toMatchObject({
+      jsonParsed: true,
+      schemaValid: true,
+      rowCount: 3,
+      unknownKeyCount: 1,
+      validRowCount: 2,
+      validRowsAtOrAboveThresholdCount: 1,
+    });
+  });
+
+  it("counts an invented category id separately from a null (declined) category", () => {
+    const text = JSON.stringify({
+      suggestions: [
+        { key: "kfc", categoryId: "cat_invented", confidence: 0.9 },
+        { key: "woolworths", categoryId: null, confidence: 0.2 },
+      ],
+    });
+    const d = diagnoseCategorySuggestionResponse(text, ITEMS, CATEGORIES);
+    expect(d).toMatchObject({ invalidCategoryIdCount: 1, nullCategoryCount: 1, validRowCount: 0 });
   });
 });
 

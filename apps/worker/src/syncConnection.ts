@@ -329,15 +329,51 @@ export async function classifyTransactionBatch(
   if (requests.length > 0) {
     const categories = await prisma.category.findMany({ where: { householdId, isArchived: false }, select: { id: true, name: true } });
     allowedCategoryIds = new Set(categories.map((c) => c.id));
+    // Content-free diagnostic (category NAMES are the household's own
+    // budget labels, not financial/identity data — never a merchant name,
+    // description, or amount) — added after a real production batch
+    // returned zero AI assignments with no way to tell, from the app's own
+    // side, whether this household even had a non-empty category list to
+    // offer the model.
+    console.log(
+      JSON.stringify({
+        scope: "categorySuggestion",
+        event: "batch_prepared",
+        requestedMerchantCount: requests.length,
+        categoryCount: categories.length,
+        categoryNames: categories.map((c) => c.name),
+      }),
+    );
     if (categories.length > 0) {
       try {
         aiAnswersByMatchKey = await categorySuggestionExtractor(requests, categories);
-      } catch {
+      } catch (err) {
         // Anthropic failure must never block sync/import — every unresolved
         // merchant just stays unresolved, same as AI_PROVIDER=stub.
+        console.log(
+          JSON.stringify({
+            scope: "categorySuggestion",
+            event: "extractor_threw",
+            requestedMerchantCount: requests.length,
+            reason: err instanceof Error ? err.message : "unknown error",
+          }),
+        );
         aiAnswersByMatchKey = new Map();
       }
     }
+  }
+
+  if (requests.length > 0) {
+    const answeredCount = [...aiAnswersByMatchKey.values()].filter((v) => v !== null).length;
+    console.log(
+      JSON.stringify({
+        scope: "categorySuggestion",
+        event: "batch_result",
+        requestedMerchantCount: requests.length,
+        answeredCount,
+        nullCount: requests.length - answeredCount,
+      }),
+    );
   }
 
   const outcomes = finalizeCategoryBatch(batchItems, deterministicByKey, aiAnswersByMatchKey, allowedCategoryIds);

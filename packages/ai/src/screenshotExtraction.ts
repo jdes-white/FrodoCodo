@@ -302,10 +302,13 @@ function buildSystemPrompt(todayIso: string, knownSource: ScreenshotSource): str
 
 // ---------- Real (Anthropic) extractor ----------
 
-/** Minimal surface this module needs from the Anthropic SDK — lets tests inject a fake client instead of hitting a real API, the same DI pattern BasiqHttpClient uses for fetch. */
+/**
+ * Minimal surface this module needs from the Anthropic SDK — lets tests inject a fake client instead of hitting a real API, the same DI pattern BasiqHttpClient uses for fetch.
+ * `stop_reason`/`model` are optional (real SDK responses always carry them; a test's fake client doesn't need to) — added so callers needing production diagnostics (e.g. `categorySuggestion.ts`'s truncation detection) can read them without widening this contract for every existing fake-client test injection.
+ */
 export interface AnthropicMessagesClient {
   messages: {
-    create(params: unknown): Promise<{ content: Array<{ type: string; text?: string }> }>;
+    create(params: unknown): Promise<{ content: Array<{ type: string; text?: string }>; stop_reason?: string | null; model?: string }>;
   };
 }
 

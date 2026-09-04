@@ -76,6 +76,24 @@ const SuggestionResponseSchema = z.object({
   suggestions: z.array(z.unknown()).max(300),
 });
 
+type RowOutcome = "MALFORMED" | "UNKNOWN_KEY" | "NULL_CATEGORY" | "INVALID_CATEGORY" | "VALID";
+
+interface RowClassification {
+  outcome: RowOutcome;
+  key?: string;
+  categoryId?: string;
+  confidence?: number;
+}
+
+function classifyRow(raw: unknown, validKeys: ReadonlySet<string>, validCategoryIds: ReadonlySet<string>): RowClassification {
+  const row = SuggestionRowSchema.safeParse(raw);
+  if (!row.success) return { outcome: "MALFORMED" };
+  if (!validKeys.has(row.data.key)) return { outcome: "UNKNOWN_KEY", key: row.data.key };
+  if (row.data.categoryId === null) return { outcome: "NULL_CATEGORY", key: row.data.key };
+  if (!validCategoryIds.has(row.data.categoryId)) return { outcome: "INVALID_CATEGORY", key: row.data.key };
+  return { outcome: "VALID", key: row.data.key, categoryId: row.data.categoryId, confidence: row.data.confidence };
+}
+
 /**
  * Parses and strictly validates a model's raw text response. Shared by the
  * real Anthropic-backed extractor and its tests so both are held to the
@@ -108,15 +126,88 @@ export function parseCategorySuggestionResponse(
   const validCategoryIds = new Set(categories.map((c) => c.id));
 
   for (const raw of top.data.suggestions) {
-    const row = SuggestionRowSchema.safeParse(raw);
-    if (!row.success) continue;
-    if (!validKeys.has(row.data.key)) continue; // hallucinated/unrecognized key
-    if (row.data.categoryId === null) continue; // model itself declined — stays null
-    if (!validCategoryIds.has(row.data.categoryId)) continue; // invented/invalid category — never passed through
-    result.set(row.data.key, { categoryId: row.data.categoryId, confidence: row.data.confidence });
+    const classified = classifyRow(raw, validKeys, validCategoryIds);
+    if (classified.outcome === "VALID") {
+      result.set(classified.key!, { categoryId: classified.categoryId!, confidence: classified.confidence! });
+    }
   }
 
   return result;
+}
+
+/**
+ * Content-free diagnostic breakdown of a model response — never returns or
+ * logs a merchant name, description, category id/name, or any transaction
+ * field, only counts, so this is safe to log verbatim from production
+ * (added after a real production batch — 41 real merchants, one real
+ * Anthropic response — came back with zero usable answers and there was no
+ * way to tell, from the summary alone, which of parseCategorySuggestionResponse's
+ * several silent fallback paths was responsible). `confidenceThreshold`
+ * mirrors `packages/ledger/src/categoryBatchClassification.ts`'s
+ * `AI_CATEGORY_CONFIDENCE_THRESHOLD` (kept as a plain parameter here rather
+ * than importing it, since `packages/ai` doesn't otherwise depend on
+ * `packages/ledger`).
+ */
+export interface CategorySuggestionDiagnostics {
+  jsonParsed: boolean;
+  schemaValid: boolean;
+  rowCount: number;
+  malformedRowCount: number;
+  unknownKeyCount: number;
+  nullCategoryCount: number;
+  invalidCategoryIdCount: number;
+  validRowCount: number;
+  validRowsAtOrAboveThresholdCount: number;
+}
+
+export function diagnoseCategorySuggestionResponse(
+  rawText: string,
+  items: CategorySuggestionInput[],
+  categories: AllowedCategoryOption[],
+  confidenceThreshold = 0.8,
+): CategorySuggestionDiagnostics {
+  const empty: CategorySuggestionDiagnostics = {
+    jsonParsed: false,
+    schemaValid: false,
+    rowCount: 0,
+    malformedRowCount: 0,
+    unknownKeyCount: 0,
+    nullCategoryCount: 0,
+    invalidCategoryIdCount: 0,
+    validRowCount: 0,
+    validRowsAtOrAboveThresholdCount: 0,
+  };
+
+  let parsed: unknown;
+  try {
+    const start = rawText.indexOf("{");
+    const end = rawText.lastIndexOf("}");
+    if (start === -1 || end === -1) throw new Error("no JSON object found");
+    parsed = JSON.parse(rawText.slice(start, end + 1));
+  } catch {
+    return empty;
+  }
+
+  const top = SuggestionResponseSchema.safeParse(parsed);
+  if (!top.success) return { ...empty, jsonParsed: true };
+
+  const validKeys = new Set(items.map((i) => i.key));
+  const validCategoryIds = new Set(categories.map((c) => c.id));
+  const diagnostics: CategorySuggestionDiagnostics = { ...empty, jsonParsed: true, schemaValid: true, rowCount: top.data.suggestions.length };
+
+  for (const raw of top.data.suggestions) {
+    const classified = classifyRow(raw, validKeys, validCategoryIds);
+    if (classified.outcome === "MALFORMED") diagnostics.malformedRowCount++;
+    else if (classified.outcome === "UNKNOWN_KEY") diagnostics.unknownKeyCount++;
+    else if (classified.outcome === "NULL_CATEGORY") diagnostics.nullCategoryCount++;
+    else if (classified.outcome === "INVALID_CATEGORY") diagnostics.invalidCategoryIdCount++;
+    else {
+      diagnostics.validRowCount++;
+      if (classified.confidence! >= confidenceThreshold) diagnostics.validRowsAtOrAboveThresholdCount++;
+    }
+  }
+
+  return diagnostics;
 }
 
 // ---------- Prompt ----------
@@ -160,20 +251,54 @@ export function createAnthropicCategorySuggestionExtractor(
       transactions: items.map((i) => ({ key: i.key, merchantName: i.merchantName, amount: i.amount, direction: i.direction })),
     };
 
+    const MAX_TOKENS = 2048;
     try {
       const message = await client.messages.create({
         model,
-        max_tokens: 2048,
+        max_tokens: MAX_TOKENS,
         system: buildSystemPrompt(categories),
         messages: [{ role: "user", content: JSON.stringify(userPayload) }],
       });
       const textBlock = message.content.find((block) => block.type === "text");
+      // Diagnostic only — see diagnoseCategorySuggestionResponse's doc
+      // comment. Content-free: counts and the model's own stop_reason, no
+      // merchant/description/category-name/amount data. `stop_reason ===
+      // "max_tokens"` is the direct signal that the response was cut off
+      // before finishing, which would otherwise look identical to any other
+      // parse failure from the outside.
+      console.log(
+        JSON.stringify({
+          scope: "categorySuggestion",
+          event: "anthropic_call_completed",
+          model,
+          maxTokens: MAX_TOKENS,
+          itemCount: items.length,
+          categoryCount: categories.length,
+          stopReason: message.stop_reason ?? null,
+          hasTextBlock: !!textBlock,
+          textLength: textBlock?.text?.length ?? 0,
+          ...(textBlock?.text ? diagnoseCategorySuggestionResponse(textBlock.text, items, categories) : {}),
+        }),
+      );
       if (!textBlock?.text) return emptyResult(items);
       return parseCategorySuggestionResponse(textBlock.text, items, categories);
-    } catch {
+    } catch (err) {
       // Anthropic failure (network, rate limit, auth, malformed SDK error,
       // etc.) must never block ingestion — every item just stays
       // unresolved, exactly as if no AI provider were configured at all.
+      // Logged reason is the SDK's own error name/message (e.g. "401
+      // authentication_error", "429 rate_limit_error") — never request or
+      // transaction content.
+      console.log(
+        JSON.stringify({
+          scope: "categorySuggestion",
+          event: "anthropic_call_failed",
+          model,
+          itemCount: items.length,
+          categoryCount: categories.length,
+          reason: err instanceof Error ? err.message : "unknown error",
+        }),
+      );
       return emptyResult(items);
     }
   };
@@ -183,5 +308,10 @@ export function createAnthropicCategorySuggestionExtractor(
 
 /** Mirrors `createStubScreenshotVisionExtractor` — honestly reports no suggestions rather than fabricating a category. */
 export function createStubCategorySuggestionExtractor(): CategorySuggestionBatchExtractor {
-  return async (items) => emptyResult(items);
+  return async (items) => {
+    if (items.length > 0) {
+      console.log(JSON.stringify({ scope: "categorySuggestion", event: "stub_extractor_used", itemCount: items.length }));
+    }
+    return emptyResult(items);
+  };
 }
