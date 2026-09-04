@@ -13,7 +13,7 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   if (process.env.RUN_CATEGORIZATION_SELF_TEST_ON_BOOT !== "1") return;
 
-  const { runCategorizationSelfTest } = await import("./lib/categorizationSelfTest");
+  const { runCategorizationSelfTest, runOrchestrationSelfTest } = await import("./lib/categorizationSelfTest");
   try {
     const result = await runCategorizationSelfTest();
     console.log(JSON.stringify({ scope: "categorySuggestion", event: "self_test_on_boot", result }));
@@ -22,6 +22,19 @@ export async function register(): Promise<void> {
       JSON.stringify({
         scope: "categorySuggestion",
         event: "self_test_on_boot_failed",
+        reason: err instanceof Error ? err.message : "unknown error",
+      }),
+    );
+  }
+
+  try {
+    const result = await runOrchestrationSelfTest();
+    console.log(JSON.stringify({ scope: "categorySuggestion", event: "orchestration_self_test_on_boot", result }));
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        scope: "categorySuggestion",
+        event: "orchestration_self_test_on_boot_failed",
         reason: err instanceof Error ? err.message : "unknown error",
       }),
     );
