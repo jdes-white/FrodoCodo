@@ -39,4 +39,28 @@ export async function register(): Promise<void> {
       }),
     );
   }
+
+  // Both synthetic self-tests above came back clean at real scale, which
+  // rules out every code-level failure mode checked so far. This runs the
+  // REAL recategorisation (apps/web/lib/recategorizeScreenshotBatch.ts) —
+  // the actual retest the user wants — against the actual still-
+  // uncategorised transactions from the real 3 Sept batch, entirely
+  // server-side, so it doesn't depend on a phone session either.
+  try {
+    const { prisma } = await import("@frodocodo/db");
+    const { recategorizeScreenshotImportBatch } = await import("./lib/recategorizeScreenshotBatch");
+    const household = await prisma.household.findFirst({ select: { id: true } });
+    if (household) {
+      const result = await recategorizeScreenshotImportBatch(household.id);
+      console.log(JSON.stringify({ scope: "categorySuggestion", event: "real_batch_recategorization_on_boot", result }));
+    }
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        scope: "categorySuggestion",
+        event: "real_batch_recategorization_on_boot_failed",
+        reason: err instanceof Error ? err.message : "unknown error",
+      }),
+    );
+  }
 }
