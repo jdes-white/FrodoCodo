@@ -147,10 +147,10 @@ describe("createAnthropicCategorySuggestionExtractor — real gateway, injected 
       messages: {
         create: async (params) => {
           capturedParams = params;
+          // "0" is the short synthetic key for the first item (ITEMS[0], "kfc") — see the
+          // "uses short synthetic keys" test below for why real keys are never sent as-is.
           return {
-            content: [
-              { type: "text", text: JSON.stringify({ suggestions: [{ key: "kfc", categoryId: "cat_food", confidence: 0.9 }] }) },
-            ],
+            content: [{ type: "text", text: JSON.stringify({ suggestions: [{ key: "0", categoryId: "cat_food", confidence: 0.9 }] }) }],
           };
         },
       },
@@ -164,8 +164,8 @@ describe("createAnthropicCategorySuggestionExtractor — real gateway, injected 
     const sentPayload = JSON.parse(params.messages[0]!.content);
     expect(sentPayload).toEqual({
       transactions: [
-        { key: "kfc", merchantName: "Kfc Everton Park", amount: "18.50", direction: "DEBIT" },
-        { key: "woolworths", merchantName: "Woolworths", amount: "142.30", direction: "DEBIT" },
+        { key: "0", merchantName: "Kfc Everton Park", amount: "18.50", direction: "DEBIT" },
+        { key: "1", merchantName: "Woolworths", amount: "142.30", direction: "DEBIT" },
       ],
     });
     // The user-message payload (the actual per-transaction data, as opposed
@@ -177,11 +177,43 @@ describe("createAnthropicCategorySuggestionExtractor — real gateway, injected 
     }
   });
 
+  it("uses short synthetic keys instead of the real (potentially long) correlation key — the confirmed production defect", async () => {
+    // Production evidence: a real merchant match key derived from a long,
+    // real-world transfer description ("Transfer To S Choki Payid Phone
+    // From Commbank App Kirsten White Cleaning" squished to ~60 chars) —
+    // echoing keys that long back for every row in a 41-item batch pushed
+    // the response past max_tokens and truncated it entirely (stop_reason
+    // "max_tokens"), producing zero usable answers for the WHOLE batch.
+    const longKeyItem: CategorySuggestionInput = {
+      key: "transfertoschokipayidphonefromcommbankappkirstenwhitecleaning",
+      merchantName: "Transfer To S Choki",
+      amount: "150.00",
+      direction: "DEBIT",
+    };
+    let capturedPayload: { transactions: Array<{ key: string }> } | undefined;
+    const fakeClient: AnthropicMessagesClient = {
+      messages: {
+        create: async (params) => {
+          capturedPayload = JSON.parse((params as { messages: Array<{ content: string }> }).messages[0]!.content);
+          return { content: [{ type: "text", text: JSON.stringify({ suggestions: [{ key: "0", categoryId: "cat_food", confidence: 0.9 }] }) }] };
+        },
+      },
+    };
+    const extractor = createAnthropicCategorySuggestionExtractor("mock-key-not-real", "claude-sonnet-5", fakeClient);
+    const result = await extractor([longKeyItem], CATEGORIES);
+
+    // The long real key is never sent to the model...
+    expect(capturedPayload!.transactions[0]!.key).toBe("0");
+    expect(capturedPayload!.transactions.some((t) => t.key === longKeyItem.key)).toBe(false);
+    // ...but the caller still gets its answer back under the real key.
+    expect(result.get(longKeyItem.key)).toEqual({ categoryId: "cat_food", confidence: 0.9 });
+  });
+
   it("never invents a category id outside the allowed list, even if the model does", async () => {
     const fakeClient: AnthropicMessagesClient = {
       messages: {
         create: async () => ({
-          content: [{ type: "text", text: JSON.stringify({ suggestions: [{ key: "kfc", categoryId: "cat_invented", confidence: 0.99 }] }) }],
+          content: [{ type: "text", text: JSON.stringify({ suggestions: [{ key: "0", categoryId: "cat_invented", confidence: 0.99 }] }) }],
         }),
       },
     };

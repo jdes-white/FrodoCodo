@@ -243,15 +243,42 @@ export function createAnthropicCategorySuggestionExtractor(
   return async (items, categories) => {
     if (items.length === 0 || categories.length === 0) return emptyResult(items);
 
+    // CONFIRMED PRODUCTION DEFECT (fixed here): a real 41-merchant batch
+    // returned stop_reason "max_tokens" — the response was truncated
+    // mid-JSON, which fails to parse entirely, so the WHOLE batch fell
+    // back to unresolved rather than just the affected rows. Real
+    // correlation keys are merchant match keys — squished, spaceless
+    // strings derived from verbose real-world descriptions ("Transfer To
+    // S Choki Payid Phone From Commbank App Kirsten White Cleaning"
+    // collapses to a ~60-character key). Echoing a key that long back for
+    // every row, multiplied across a realistic batch, is what exhausted
+    // the token budget; short synthetic transactions (plain merchant
+    // names like "Coles") never surfaced this because their keys stayed
+    // short. Short numeric indices keep each row's token cost constant
+    // and small regardless of the real key's length — translated back to
+    // the real keys before this function returns, so no caller ever sees
+    // them.
+    const shortKeyToRealKey = new Map<string, string>();
+    const shortKeyedItems: CategorySuggestionInput[] = items.map((item, i) => {
+      const shortKey = String(i);
+      shortKeyToRealKey.set(shortKey, item.key);
+      return { ...item, key: shortKey };
+    });
+
     // Deliberately minimal — only merchant name, amount and direction ever
     // leave this process for categorisation. No description, account,
     // provider, or household-identity field exists on `CategorySuggestionInput`
     // to accidentally include here.
     const userPayload = {
-      transactions: items.map((i) => ({ key: i.key, merchantName: i.merchantName, amount: i.amount, direction: i.direction })),
+      transactions: shortKeyedItems.map((i) => ({ key: i.key, merchantName: i.merchantName, amount: i.amount, direction: i.direction })),
     };
 
-    const MAX_TOKENS = 2048;
+    // Raised from 2048 (which the confirmed defect above hit even after
+    // the short-key fix would leave less margin for a larger household's
+    // category list or a bigger batch) — matches
+    // `createAnthropicScreenshotVisionExtractor`'s existing budget for
+    // consistency.
+    const MAX_TOKENS = 4096;
     try {
       const message = await client.messages.create({
         model,
@@ -277,11 +304,18 @@ export function createAnthropicCategorySuggestionExtractor(
           stopReason: message.stop_reason ?? null,
           hasTextBlock: !!textBlock,
           textLength: textBlock?.text?.length ?? 0,
-          ...(textBlock?.text ? diagnoseCategorySuggestionResponse(textBlock.text, items, categories) : {}),
+          ...(textBlock?.text ? diagnoseCategorySuggestionResponse(textBlock.text, shortKeyedItems, categories) : {}),
         }),
       );
       if (!textBlock?.text) return emptyResult(items);
-      return parseCategorySuggestionResponse(textBlock.text, items, categories);
+
+      const shortKeyedResult = parseCategorySuggestionResponse(textBlock.text, shortKeyedItems, categories);
+      const result: CategorySuggestionMap = emptyResult(items);
+      for (const [shortKey, outcome] of shortKeyedResult) {
+        const realKey = shortKeyToRealKey.get(shortKey);
+        if (realKey) result.set(realKey, outcome);
+      }
+      return result;
     } catch (err) {
       // Anthropic failure (network, rate limit, auth, malformed SDK error,
       // etc.) must never block ingestion — every item just stays
