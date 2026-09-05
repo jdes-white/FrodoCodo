@@ -34,15 +34,26 @@ export async function listTransactions(householdId: string, filters: Transaction
       ],
     });
   }
-  // "Needs review" now covers three independent reasons a transaction needs
-  // household attention: uncategorized (the original meaning), flagged by
-  // screenshot-import dedupe as a possible duplicate
+  // "Needs review" covers four independent reasons a transaction needs
+  // household attention — categorisation uncertainty (the original,
+  // uncategorized meaning), duplicate uncertainty
   // (Transaction.possibleDuplicateOfId, packages/ledger/src/screenshotDedupe.ts),
-  // or flagged by screenshot-import vision extraction as a low-confidence
-  // read (Transaction.needsExtractionReview,
-  // packages/ai/src/screenshotExtraction.ts) — reusing this existing review
-  // queue rather than building a parallel one per reason.
-  if (filters.needsReviewOnly) and.push({ OR: [{ categoryId: null }, { possibleDuplicateOfId: { not: null } }, { needsExtractionReview: true }] });
+  // extraction uncertainty (Transaction.needsExtractionReview,
+  // packages/ai/src/screenshotExtraction.ts), and financial-movement
+  // uncertainty (Transaction.needsFinancialMovementReview,
+  // packages/ledger/src/financialMovementDetection.ts — categorisation
+  // closure pass §5) — reusing this existing review queue rather than
+  // building a parallel one per reason, while keeping each reason as its
+  // own column so the UI can tell them apart.
+  if (filters.needsReviewOnly)
+    and.push({
+      OR: [
+        { categoryId: null },
+        { possibleDuplicateOfId: { not: null } },
+        { needsExtractionReview: true },
+        { needsFinancialMovementReview: true },
+      ],
+    });
   if (filters.reviewedOnly) and.push({ categoryId: { not: null } });
   if (!filters.includeExcluded) and.push({ isExcludedFromBudget: false });
   if (filters.startDate || filters.endDate) {

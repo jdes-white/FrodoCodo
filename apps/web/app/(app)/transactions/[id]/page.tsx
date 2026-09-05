@@ -13,6 +13,7 @@ import {
   keepAsSeparateTransaction,
   markAsDuplicateTransaction,
   clearExtractionReview,
+  confirmAsGenuineSpending,
 } from "./actions";
 import { Card } from "@/components/Card";
 import { CategoryIcon } from "@/components/CategoryIcon";
@@ -96,6 +97,36 @@ export default async function TransactionDetailPage({ params }: { params: Promis
                 style={{ background: "var(--status-behind)" }}
               >
                 This is a duplicate — remove it
+              </button>
+            </form>
+          </div>
+        </Card>
+      )}
+
+      {transaction.needsFinancialMovementReview && (
+        <Card as="section">
+          <h2 className="mb-2 text-sm font-medium" style={{ color: "var(--status-behind)" }}>
+            Might not be spending
+          </h2>
+          <p className="mb-3 text-sm" style={{ color: "var(--color-text-muted)" }}>
+            This looks like it could be a transfer between your own accounts rather than a purchase. Is it a transfer,
+            or genuine spending?
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <form action={markAsTransfer}>
+              <input type="hidden" name="transactionId" value={transaction.id} />
+              <button type="submit" className="rounded-lg border px-3 py-1.5 text-sm" style={{ borderColor: "var(--color-border)" }}>
+                It&apos;s a transfer
+              </button>
+            </form>
+            <form action={confirmAsGenuineSpending}>
+              <input type="hidden" name="transactionId" value={transaction.id} />
+              <button
+                type="submit"
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-white"
+                style={{ background: "var(--color-accent)" }}
+              >
+                It&apos;s genuine spending
               </button>
             </form>
           </div>

@@ -254,7 +254,11 @@ export async function markAsTransfer(formData: FormData): Promise<void> {
 
   await prisma.transaction.updateMany({
     where: { id: transactionId, account: { connection: { householdId: session.householdId } } },
-    data: { isTransfer: true, isExcludedFromBudget: true },
+    // Also clears financial-movement-review uncertainty (if this came from
+    // that flow, packages/ledger/src/financialMovementDetection.ts) — the
+    // household has now resolved the very question that flag existed to
+    // raise, so it shouldn't keep sitting in the review queue for it.
+    data: { isTransfer: true, isExcludedFromBudget: true, needsFinancialMovementReview: false },
   });
 
   await recordAuditEvent({
@@ -353,6 +357,36 @@ export async function markAsDuplicateTransaction(formData: FormData): Promise<vo
  * never altered (no data was ever fabricated to begin with, so there is
  * nothing to "fix", only to confirm).
  */
+/**
+ * Financial-movement review (packages/ledger/src/financialMovementDetection.ts,
+ * categorisation closure pass §2/§5): the household confirms this is
+ * genuine spending, not an internal movement — just clears the flag,
+ * categoryId is left exactly as it was (null, if nothing deterministic
+ * resolved it) so the transaction proceeds through ordinary categorisation
+ * review via the Reclassify form above, same as any other uncategorized
+ * transaction.
+ */
+export async function confirmAsGenuineSpending(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const transactionId = String(formData.get("transactionId"));
+
+  await prisma.transaction.updateMany({
+    where: { id: transactionId, account: { connection: { householdId: session.householdId } } },
+    data: { needsFinancialMovementReview: false },
+  });
+
+  await recordAuditEvent({
+    householdId: session.householdId,
+    actorUserId: session.userId,
+    action: "CONFIRM_GENUINE_SPENDING",
+    entityType: "Transaction",
+    entityId: transactionId,
+  });
+
+  revalidatePath(`/transactions/${transactionId}`);
+  revalidatePath("/transactions");
+}
+
 export async function clearExtractionReview(formData: FormData): Promise<void> {
   const session = await requireSession();
   const transactionId = String(formData.get("transactionId"));

@@ -5,7 +5,6 @@ import { getHousehold } from "@/lib/household";
 import { withRouteTiming } from "@/lib/perf";
 import { setAccountIncluded, disconnectInstitution, connectInstitution } from "./actions";
 import { Card } from "@/components/Card";
-import { RecategorizeScreenshotBatchButton } from "./RecategorizeScreenshotBatchButton";
 import { PageHeader } from "@/components/PageHeader";
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ connected?: string }> }) {
@@ -145,8 +144,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           Core budgeting and the dashboard work fully even if the AI provider is unavailable.
         </p>
       </Section>
-
-      {isAdmin && <RecategorizeScreenshotBatchButton />}
     </div>
   );
 }

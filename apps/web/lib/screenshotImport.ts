@@ -469,6 +469,8 @@ async function createScreenshotTransaction(
       suggestedCategoryId: classification.suggestedCategoryId,
       suggestedCategorySource: classification.suggestedCategorySource,
       suggestedCategoryConfidence: classification.suggestedCategoryConfidence,
+      isExcludedFromBudget: classification.isExcludedFromBudget,
+      needsFinancialMovementReview: classification.needsFinancialMovementReview,
       possibleDuplicateOfId,
       needsExtractionReview: input.needsExtractionReview,
     },

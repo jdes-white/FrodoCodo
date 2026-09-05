@@ -49,6 +49,14 @@ describe("resolveClassification", () => {
     expect(outcome).toMatchObject({ categoryId: "dining", source: "AI" });
   });
 
+  it("a confident learned mapping is used without AI, and beats a competing AI suggestion", () => {
+    const outcome = resolveClassification(
+      { categoryId: "groceries", source: "LEARNED_MAPPING", confidence: 0.85 },
+      { categoryId: "dining", confidence: 0.99 },
+    );
+    expect(outcome).toMatchObject({ status: "CLASSIFIED", categoryId: "groceries", source: "LEARNED_MAPPING" });
+  });
+
   it("sends a transaction to the review queue when nothing clears the threshold", () => {
     const outcome = resolveClassification(
       { categoryId: "shopping", source: "PROVIDER", confidence: 0.3 },

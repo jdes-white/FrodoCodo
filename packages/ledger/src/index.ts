@@ -8,3 +8,4 @@ export * from "./ingestion.js";
 export * from "./accountAlias.js";
 export * from "./screenshotDedupe.js";
 export * from "./categoryBatchClassification.js";
+export * from "./financialMovementDetection.js";

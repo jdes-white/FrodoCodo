@@ -689,6 +689,25 @@ model Transaction {
   // clearExtractionReview in apps/web/app/(app)/transactions/[id]/actions.ts).
   needsExtractionReview Boolean @default(false)
 
+  // Categorisation closure pass (packages/ledger/src/financialMovementDetection.ts):
+  // set when a single-leg transaction's description looks like an internal
+  // transfer, but FrodoCodo cannot confidently confirm that from the
+  // description alone (no matched counterpart leg — see
+  // transferDetection.ts's own, separate, confident-pair matching, which
+  // sets isTransfer/isExcludedFromBudget instead of this flag). Distinct
+  // from needsExtractionReview and possibleDuplicateOfId above: this is
+  // "is this even spending?" uncertainty, not "did we read it right?" or
+  // "have we seen this before?" uncertainty (§5 of the closure pass — the
+  // review queue must be able to tell these apart). categoryId is
+  // deliberately left null while this is set — never guess a spending
+  // category for something that might not be spending. Cleared by the
+  // household confirming either "this is a transfer" (markAsTransfer,
+  // apps/web/app/(app)/transactions/[id]/actions.ts, which also marks
+  // isTransfer/isExcludedFromBudget) or "this is genuine spending"
+  // (confirmAsGenuineSpending, same file), the latter leaving categoryId
+  // null so the row proceeds through ordinary categorisation review.
+  needsFinancialMovementReview Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -713,6 +732,7 @@ model Transaction {
   @@index([isExcludedFromBudget])
   @@index([possibleDuplicateOfId])
   @@index([needsExtractionReview])
+  @@index([needsFinancialMovementReview])
 }
 
 model TransactionClassification {

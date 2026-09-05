@@ -185,6 +185,8 @@ export async function syncConnection(
             suggestedCategoryId: classification.suggestedCategoryId,
             suggestedCategorySource: classification.suggestedCategorySource,
             suggestedCategoryConfidence: classification.suggestedCategoryConfidence,
+            isExcludedFromBudget: classification.isExcludedFromBudget,
+            needsFinancialMovementReview: classification.needsFinancialMovementReview,
             syncRunId: syncRun.id,
             // No rawProviderPayload field exists anymore (Task 6B): the
             // provider's raw response for this transaction (tx.raw) was
@@ -244,6 +246,25 @@ export interface BatchedClassificationResult {
   suggestedCategoryId: string | null;
   suggestedCategorySource: ClassificationSource | null;
   suggestedCategoryConfidence: number | null;
+  /**
+   * Set when `financialMovementDetection.ts` confidently recognised this as
+   * a non-spend movement (e.g. salary/income) that nothing deterministic
+   * already classified — true only ever alongside `categoryId: null`, never
+   * a fabricated spending category. Callers must persist this onto
+   * `Transaction.isExcludedFromBudget` at creation time, the same flag
+   * `reconcileTransferReversalsAndRefunds` uses for confirmed transfer
+   * pairs, so it's excluded from spend totals and from the review queue by
+   * the exact same, already-existing filters.
+   */
+  isExcludedFromBudget: boolean;
+  /**
+   * Set when the description looks like it might be an internal movement
+   * but nothing confirms that confidently enough to exclude it outright —
+   * distinct "financial-movement uncertainty" (categorisation closure pass
+   * §5), never combined with `isExcludedFromBudget: true`. Callers persist
+   * this onto `Transaction.needsFinancialMovementReview`.
+   */
+  needsFinancialMovementReview: boolean;
 }
 
 /**
@@ -319,10 +340,26 @@ export async function classifyTransactionBatch(
       direction: item.direction,
       merchantRule: rule ? { categoryId: rule.categoryId, ruleId: rule.id } : undefined,
       learnedMapping: merchantInfo.defaultCategoryId ? { categoryId: merchantInfo.defaultCategoryId, confidence: 0.85 } : undefined,
+      // Only ever consulted by `financialMovementDetection.ts`'s
+      // description-keyword check inside planCategorySuggestionBatch — never
+      // sent to the AI extractor itself (categorySuggestionExtractor only
+      // ever receives `requests`, built from matchKey/merchantName/amount/
+      // direction below, never the raw description).
+      originalDescription: item.originalDescription,
     };
   });
 
-  const { deterministicByKey, requests } = planCategorySuggestionBatch(batchItems);
+  // Categorisation closure pass (§2/§3/§5): planCategorySuggestionBatch
+  // resolves household rule/learned mapping precedence exactly as before,
+  // and additionally recognises non-spend-looking descriptions among
+  // whatever's left unresolved (movementByKey) — those merchants are
+  // excluded from `requests` entirely, so no AI call is ever made asking a
+  // model to invent a spending category for a salary deposit or a
+  // transfer. finalizeCategoryBatch below turns movementByKey into the
+  // transaction's final outcome once no AI answer exists for it (which,
+  // since it was never requested, is always the case unless a rule/learned
+  // mapping already won first).
+  const { deterministicByKey, movementByKey, requests } = planCategorySuggestionBatch(batchItems);
 
   let aiAnswersByMatchKey = new Map<string, { categoryId: string; confidence: number } | null>();
   let allowedCategoryIds = new Set<string>();
@@ -376,12 +413,47 @@ export async function classifyTransactionBatch(
     );
   }
 
-  const outcomes = finalizeCategoryBatch(batchItems, deterministicByKey, aiAnswersByMatchKey, allowedCategoryIds);
+  const outcomes = finalizeCategoryBatch(batchItems, deterministicByKey, aiAnswersByMatchKey, allowedCategoryIds, movementByKey);
 
   for (const item of items) {
     const merchant = normalizedByKey.get(item.key)!;
     const merchantInfo = merchantByMatchKey.get(merchant.matchKey)!;
     const classification = outcomes.get(item.key)!;
+
+    if (classification.status === "EXCLUDED_NON_SPEND") {
+      results.set(item.key, {
+        merchantId: merchantInfo.id,
+        merchantNormalizedName: merchant.normalizedName,
+        merchantConfidence: merchant.confidence,
+        categoryId: null,
+        classificationConfidence: null,
+        classificationSource: "SYSTEM",
+        suggestedCategoryId: null,
+        suggestedCategorySource: null,
+        suggestedCategoryConfidence: null,
+        isExcludedFromBudget: true,
+        needsFinancialMovementReview: false,
+      });
+      continue;
+    }
+
+    if (classification.status === "NEEDS_FINANCIAL_MOVEMENT_REVIEW") {
+      results.set(item.key, {
+        merchantId: merchantInfo.id,
+        merchantNormalizedName: merchant.normalizedName,
+        merchantConfidence: merchant.confidence,
+        categoryId: null,
+        classificationConfidence: null,
+        classificationSource: null,
+        suggestedCategoryId: null,
+        suggestedCategorySource: null,
+        suggestedCategoryConfidence: null,
+        isExcludedFromBudget: false,
+        needsFinancialMovementReview: true,
+      });
+      continue;
+    }
+
     results.set(item.key, {
       merchantId: merchantInfo.id,
       merchantNormalizedName: merchant.normalizedName,
@@ -392,6 +464,8 @@ export async function classifyTransactionBatch(
       suggestedCategoryId: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessCategoryId ?? null) : null,
       suggestedCategorySource: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessSource ?? null) : null,
       suggestedCategoryConfidence: classification.status === "NEEDS_REVIEW" ? (classification.bestGuessConfidence ?? null) : null,
+      isExcludedFromBudget: false,
+      needsFinancialMovementReview: false,
     });
   }
 

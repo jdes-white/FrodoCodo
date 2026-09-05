@@ -7,6 +7,7 @@ import {
   type DeterministicClassification,
   type ClassificationOutcome,
 } from "./classification.js";
+import { classifyFinancialMovement, type FinancialMovementSignal } from "./financialMovementDetection.js";
 
 /**
  * Batched AI categorisation — pure planning/merging logic (production
@@ -42,6 +43,16 @@ export interface BatchClassifiableItem {
   direction: "DEBIT" | "CREDIT";
   merchantRule?: MerchantRuleLookup;
   learnedMapping?: LearnedMappingLookup;
+  /**
+   * The raw provider/screenshot description — used ONLY by
+   * `financialMovementDetection.ts`'s conservative keyword check, never sent
+   * to the AI extractor (which only ever sees `merchantName`/`amount`/
+   * `direction` via `CategorySuggestionRequest` below). Optional so
+   * existing callers/tests that never exercise financial-movement detection
+   * don't need to supply it; an absent description simply can never match
+   * a movement pattern (`classifyFinancialMovement` treats it as "").
+   */
+  originalDescription?: string;
 }
 
 export interface CategorySuggestionRequest {
@@ -75,9 +86,20 @@ export const AI_CATEGORY_CONFIDENCE_THRESHOLD = 0.8;
  */
 export function planCategorySuggestionBatch(items: BatchClassifiableItem[]): {
   deterministicByKey: Map<string, DeterministicClassification | null>;
+  /**
+   * Categorisation closure pass (§2/§3): items whose raw description looks
+   * like a non-spend financial movement (income, an internal transfer) —
+   * populated only for items nothing deterministic already resolved
+   * confidently. These are deliberately excluded from `requests` below: no
+   * AI call is ever made asking a model to invent a spending category for
+   * something that might not be spending at all. `finalizeCategoryBatch`
+   * turns this into the transaction's final outcome.
+   */
+  movementByKey: Map<string, FinancialMovementSignal>;
   requests: CategorySuggestionRequest[];
 } {
   const deterministicByKey = new Map<string, DeterministicClassification | null>();
+  const movementByKey = new Map<string, FinancialMovementSignal>();
   const requestByMatchKey = new Map<string, CategorySuggestionRequest>();
 
   for (const item of items) {
@@ -88,7 +110,18 @@ export function planCategorySuggestionBatch(items: BatchClassifiableItem[]): {
     deterministicByKey.set(item.key, deterministic);
 
     const alreadyConfident = deterministic !== null && deterministic.confidence >= DEFAULT_REVIEW_THRESHOLD;
-    if (!alreadyConfident && !requestByMatchKey.has(item.matchKey)) {
+    if (alreadyConfident) continue;
+
+    const movementSignal = classifyFinancialMovement({
+      originalDescription: item.originalDescription ?? "",
+      direction: item.direction,
+    });
+    if (movementSignal !== "ORDINARY") {
+      movementByKey.set(item.key, movementSignal);
+      continue;
+    }
+
+    if (!requestByMatchKey.has(item.matchKey)) {
       requestByMatchKey.set(item.matchKey, {
         key: item.matchKey,
         merchantName: item.merchantName,
@@ -98,7 +131,7 @@ export function planCategorySuggestionBatch(items: BatchClassifiableItem[]): {
     }
   }
 
-  return { deterministicByKey, requests: [...requestByMatchKey.values()] };
+  return { deterministicByKey, movementByKey, requests: [...requestByMatchKey.values()] };
 }
 
 /**
@@ -113,14 +146,21 @@ export function planCategorySuggestionBatch(items: BatchClassifiableItem[]): {
  * which `resolveClassification` already knows how to fall back safely from
  * (NEEDS_REVIEW, `categoryId: null`).
  */
+/** `finalizeCategoryBatch`'s two movement-specific outcomes, alongside the existing `ClassificationOutcome` statuses. */
+export type FinalCategoryOutcome =
+  | ClassificationOutcome
+  | { status: "EXCLUDED_NON_SPEND" }
+  | { status: "NEEDS_FINANCIAL_MOVEMENT_REVIEW" };
+
 export function finalizeCategoryBatch(
   items: BatchClassifiableItem[],
   deterministicByKey: Map<string, DeterministicClassification | null>,
   aiAnswersByMatchKey: Map<string, CategorySuggestionAnswer | null>,
   allowedCategoryIds: ReadonlySet<string>,
+  movementByKey: ReadonlyMap<string, FinancialMovementSignal> = new Map(),
   aiConfidenceThreshold: number = AI_CATEGORY_CONFIDENCE_THRESHOLD,
-): Map<string, ClassificationOutcome> {
-  const outcomes = new Map<string, ClassificationOutcome>();
+): Map<string, FinalCategoryOutcome> {
+  const outcomes = new Map<string, FinalCategoryOutcome>();
 
   for (const item of items) {
     const deterministic = deterministicByKey.get(item.key) ?? null;
@@ -130,7 +170,22 @@ export function finalizeCategoryBatch(
         ? { categoryId: answer.categoryId, confidence: answer.confidence }
         : null;
 
-    outcomes.set(item.key, resolveClassification(deterministic, validAiSuggestion));
+    const outcome = resolveClassification(deterministic, validAiSuggestion);
+
+    // A movement signal is only ever present for an item nothing
+    // deterministic already resolved confidently (`planCategorySuggestionBatch`
+    // only populates `movementByKey` in that case), and such an item was
+    // never sent to the AI either — so `outcome.status` here is always
+    // "NEEDS_REVIEW" whenever a signal exists. An explicit household rule
+    // or learned mapping (checked first, via `resolveClassification` above)
+    // always wins regardless of what the description looks like (§1/§6).
+    const movementSignal = movementByKey.get(item.key);
+    if (movementSignal && outcome.status === "NEEDS_REVIEW") {
+      outcomes.set(item.key, { status: movementSignal === "CONFIDENT_NON_SPEND" ? "EXCLUDED_NON_SPEND" : "NEEDS_FINANCIAL_MOVEMENT_REVIEW" });
+      continue;
+    }
+
+    outcomes.set(item.key, outcome);
   }
 
   return outcomes;
