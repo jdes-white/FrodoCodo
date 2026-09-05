@@ -14,6 +14,7 @@ interface SearchParams {
   accountId?: string;
   merchantQuery?: string;
   needsReviewOnly?: string;
+  importBatchId?: string;
   month?: string;
 }
 
@@ -24,11 +25,14 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   const session = await requireSession();
 
   const needsReviewOnly = params.needsReviewOnly === "1";
+  const importBatchId = params.importBatchId || undefined;
   const month = params.month && MONTH_PATTERN.test(params.month) ? params.month : currentMonth();
   // The review queue is about *what still needs attention*, not *what happened
   // this month* — an uncategorized transaction from an earlier month still
   // needs a category, so that view intentionally isn't month-constrained.
-  const { startDate, endDate } = needsReviewOnly ? {} : monthBounds(month);
+  // A single import batch is the same: its rows should all show regardless
+  // of which calendar month they landed in.
+  const { startDate, endDate } = needsReviewOnly || importBatchId ? {} : monthBounds(month);
 
   const [transactions, categories, accounts] = await withRouteTiming("/transactions", () =>
     Promise.all([
@@ -37,6 +41,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
         accountId: params.accountId || undefined,
         merchantQuery: params.merchantQuery || undefined,
         needsReviewOnly,
+        importBatchId,
         startDate,
         endDate,
         limit: 150,

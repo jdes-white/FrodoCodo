@@ -10,6 +10,8 @@ export interface TransactionFilters {
   reviewedOnly?: boolean;
   needsReviewOnly?: boolean;
   includeExcluded?: boolean;
+  /** Screenshot-to-budget closure pass: scope to one screenshot import batch (Transaction.importBatchId) — see apps/web/lib/importBatches.ts. */
+  importBatchId?: string;
   startDate?: string;
   endDate?: string;
   limit?: number;
@@ -55,7 +57,12 @@ export async function listTransactions(householdId: string, filters: Transaction
       ],
     });
   if (filters.reviewedOnly) and.push({ categoryId: { not: null } });
-  if (!filters.includeExcluded) and.push({ isExcludedFromBudget: false });
+  if (filters.importBatchId) and.push({ importBatchId: filters.importBatchId });
+  // A batch-detail view is about accounting for every row the upload
+  // produced, including ones a categorisation/movement rule correctly
+  // excluded from budget totals — that exclusion is exactly one of the
+  // outcomes the view needs to show, not a reason to hide the row.
+  if (!filters.includeExcluded && !filters.importBatchId) and.push({ isExcludedFromBudget: false });
   if (filters.startDate || filters.endDate) {
     and.push({
       transactionDate: {

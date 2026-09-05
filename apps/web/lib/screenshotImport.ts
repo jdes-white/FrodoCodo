@@ -69,6 +69,14 @@ export interface ScreenshotFileInput {
 }
 
 export interface ScreenshotImportSummary {
+  /**
+   * The durable `ImportBatch` row this upload was recorded as — the
+   * screenshot-to-budget closure pass's fix for the result disappearing on
+   * navigation/reload: everything below is also reconstructable later from
+   * the database via `apps/web/lib/importBatches.ts`, keyed by this id,
+   * rather than depending on this response object staying in memory.
+   */
+  importBatchId: string;
   screenshotsProcessed: number;
   /** Screenshots that couldn't be safely sanitized (unsupported/unrecognized layout) or whose extraction call failed outright — never silently skipped, always counted. */
   screenshotsUnrecognized: number;
@@ -166,7 +174,20 @@ export async function importScreenshotBatch(
   const sourcesDetected = [...new Set(extractions.map((e) => e.source))];
 
   if (extractions.length === 0) {
+    const emptyBatch = await prisma.importBatch.create({
+      data: {
+        householdId,
+        createdByUserId: actorUserId,
+        screenshotsProcessed: files.length,
+        screenshotsUnrecognized,
+        sourcesDetected: [],
+        transactionsFound: 0,
+        alreadyKnownCount: 0,
+        unreadableTransactionCount,
+      },
+    });
     return {
+      importBatchId: emptyBatch.id,
       screenshotsProcessed: files.length,
       screenshotsUnrecognized,
       sourcesDetected: [],
@@ -242,11 +263,33 @@ export async function importScreenshotBatch(
 
   const outcomes = resolveScreenshotBatch(candidates, existingComparables);
 
+  // Known upfront from `outcomes` alone — none of these three actions ever
+  // insert a new row in this batch (SKIP_DUPLICATE/SKIP_DUPLICATE_OF_CANDIDATE
+  // match an existing or sibling candidate; UPDATE_STATUS_TO_POSTED only
+  // patches an existing row from an earlier batch/sync). Computed before
+  // the loop below so the durable `ImportBatch` row can be created with its
+  // final counts already known, and every row this batch DOES create can
+  // carry that row's id from the moment it's inserted.
+  const alreadyKnown = outcomes.filter(
+    (o) => o.action === "SKIP_DUPLICATE" || o.action === "UPDATE_STATUS_TO_POSTED" || o.action === "SKIP_DUPLICATE_OF_CANDIDATE",
+  ).length;
+
+  const importBatch = await prisma.importBatch.create({
+    data: {
+      householdId,
+      createdByUserId: actorUserId,
+      screenshotsProcessed: files.length,
+      screenshotsUnrecognized,
+      sourcesDetected: sourcesDetected.map(sourceLabel),
+      transactionsFound,
+      alreadyKnownCount: alreadyKnown,
+      unreadableTransactionCount,
+    },
+  });
+
   let newTransactions = 0;
-  let alreadyKnown = 0;
   let needsReview = 0;
   const createdIdByCandidateIndex = new Map<number, string>();
-  const deferredSkipOfCandidate: number[] = [];
   // Candidates that will actually become a row — classified as one batch
   // (Layer 4/AI categorisation) below, before any of them are inserted.
   const toCreate: Array<{ index: number; possibleDuplicateOfExistingId: string | null }> = [];
@@ -256,7 +299,6 @@ export async function importScreenshotBatch(
     const candidate = built[i]!;
 
     if (outcome.action === "SKIP_DUPLICATE") {
-      alreadyKnown++;
       continue;
     }
     if (outcome.action === "UPDATE_STATUS_TO_POSTED") {
@@ -268,14 +310,13 @@ export async function importScreenshotBatch(
           ...(candidate.needsExtractionReview ? { needsExtractionReview: true } : {}),
         },
       });
-      alreadyKnown++;
       continue;
     }
     if (outcome.action === "SKIP_DUPLICATE_OF_CANDIDATE") {
       // The candidate it duplicates may not have been created yet (batch
-      // order isn't guaranteed) — resolve the count now, the row itself
-      // needs nothing further since only the *kept* candidate is inserted.
-      deferredSkipOfCandidate.push(i);
+      // order isn't guaranteed) — already counted in `alreadyKnown` above,
+      // the row itself needs nothing further since only the *kept*
+      // candidate is inserted.
       continue;
     }
 
@@ -297,16 +338,11 @@ export async function importScreenshotBatch(
       const outcome = outcomes[index]!;
       const classification = classifications.get(String(index))!;
 
-      const id = await createScreenshotTransaction(candidate, classification, possibleDuplicateOfExistingId);
+      const id = await createScreenshotTransaction(candidate, classification, possibleDuplicateOfExistingId, importBatch.id);
       createdIdByCandidateIndex.set(index, id);
       if (outcome.action === "NEEDS_REVIEW" || candidate.needsExtractionReview) needsReview++;
       else newTransactions++;
     }
-  }
-
-  for (const i of deferredSkipOfCandidate) {
-    alreadyKnown++;
-    void i;
   }
 
   // Cross-candidate NEEDS_REVIEW references only resolvable once both
@@ -324,6 +360,7 @@ export async function importScreenshotBatch(
   await reconcileTransferReversalsAndRefunds(householdId);
 
   const summary: ScreenshotImportSummary = {
+    importBatchId: importBatch.id,
     screenshotsProcessed: files.length,
     screenshotsUnrecognized,
     sourcesDetected: sourcesDetected.map(sourceLabel),
@@ -437,6 +474,7 @@ async function createScreenshotTransaction(
   input: ScreenshotTransactionInput,
   classification: BatchedClassificationResult,
   possibleDuplicateOfId: string | null,
+  importBatchId: string,
 ): Promise<string> {
   const ingestible = toIngestibleTransactionFields({
     sourceAccountId: input.accountId,
@@ -473,6 +511,7 @@ async function createScreenshotTransaction(
       needsFinancialMovementReview: classification.needsFinancialMovementReview,
       possibleDuplicateOfId,
       needsExtractionReview: input.needsExtractionReview,
+      importBatchId,
     },
     select: { id: true },
   });

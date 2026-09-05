@@ -209,6 +209,7 @@ model User {
   classifications TransactionClassification[]
   merchantRules   MerchantRule[]
   createdCommitments UpcomingCommitment[]
+  createdImportBatches ImportBatch[]
 }
 
 model Household {
@@ -237,6 +238,7 @@ model Household {
   merchantRules      MerchantRule[]
   northStarAssumptions NorthStarAssumptions?
   upcomingCommitments UpcomingCommitment[]
+  importBatches       ImportBatch[]
 }
 
 model HouseholdMember {
@@ -614,6 +616,19 @@ model Transaction {
   // wired up yet.
   sourceType             TransactionSourceType @default(PROVIDER_SYNC)
 
+  // Links a screenshot-imported row back to the upload that produced it
+  // (screenshot-to-budget closure pass) — null for every non-screenshot
+  // ingestion path (provider sync, and any future CSV/PDF import). This is
+  // what lets the import result screen be reconstructed from the database
+  // after navigation/reload instead of depending on the API response
+  // staying in memory: `ImportBatch` below stores only the counts that
+  // never became a persisted row (screenshots rejected, rows deduped away
+  // before creation); everything that DID become a row is looked up live
+  // through this relation, so a later recategorisation or review
+  // confirmation is reflected automatically without this column ever
+  // needing to be touched again.
+  importBatchId String?
+
   transactionDate  DateTime @db.Date
   postingDate      DateTime? @db.Date
   amount           Decimal  @db.Decimal(14, 2) // always positive magnitude
@@ -724,6 +739,7 @@ model Transaction {
   possibleDuplicateOf        Transaction?  @relation("PossibleDuplicate", fields: [possibleDuplicateOfId], references: [id], onDelete: SetNull)
   flaggedAsPossibleDuplicate Transaction[] @relation("PossibleDuplicate")
   insightEvidence  InsightEvidence[]
+  importBatch      ImportBatch?  @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
 
   @@unique([accountId, providerTransactionId])
   @@index([accountId, transactionDate])
@@ -733,6 +749,7 @@ model Transaction {
   @@index([possibleDuplicateOfId])
   @@index([needsExtractionReview])
   @@index([needsFinancialMovementReview])
+  @@index([importBatchId])
 }
 
 model TransactionClassification {
@@ -751,6 +768,44 @@ model TransactionClassification {
   createdBy   User?       @relation(fields: [createdByUserId], references: [id])
 
   @@index([transactionId])
+}
+
+// ---------- Screenshot import batches ----------
+
+/**
+ * One row per completed screenshot upload (screenshot-to-budget closure
+ * pass) — the durable record an import result screen reconstructs from,
+ * replacing the API response that previously lived only in client
+ * component state and vanished on navigation/reload. Only counts that can
+ * never become a `Transaction` row live here (a screenshot whose layout
+ * couldn't be sanitised, a row deduped away before insertion): every
+ * outcome that DID produce a row — categorised, excluded as a non-spend
+ * movement, flagged for any kind of review, etc. — is read live off the
+ * `Transaction` rows linked via `importBatchId`, never duplicated here, so
+ * a later recategorisation is reflected automatically without this row
+ * ever being touched again. No screenshot image bytes are referenced or
+ * stored — see `apps/web/lib/screenshotImport.ts`'s privacy note.
+ */
+model ImportBatch {
+  id                         String   @id @default(cuid())
+  householdId                String
+  createdByUserId            String?
+  createdAt                  DateTime @default(now())
+  screenshotsProcessed       Int
+  screenshotsUnrecognized    Int
+  /** Screenshot source labels detected in this batch (e.g. ["CBA", "Virgin"]) — display labels only, never account identifiers. */
+  sourcesDetected            Json
+  transactionsFound          Int
+  /** Candidate rows dedupe matched to an existing transaction and never inserted — accounted for here since there is no row to look up afterward. */
+  alreadyKnownCount          Int
+  /** Rows the vision model saw but could not confidently structure at all — never inserted, accounted for here since there is no row to look up afterward. */
+  unreadableTransactionCount Int
+
+  household   Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  createdBy   User?         @relation(fields: [createdByUserId], references: [id])
+  transactions Transaction[]
+
+  @@index([householdId, createdAt])
 }
 
 // ---------- Insights ----------

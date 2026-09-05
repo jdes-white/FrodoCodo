@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import type { ScreenshotImportSummary } from "@/lib/screenshotImport";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/Card";
 
-type ImportState = { status: "idle" } | { status: "error"; error: string } | { status: "success"; summary: ScreenshotImportSummary };
+type ImportState = { status: "idle" } | { status: "error"; error: string } | { status: "success" };
 
 const INITIAL_STATE: ImportState = { status: "idle" };
 
@@ -17,13 +17,22 @@ const INITIAL_STATE: ImportState = { status: "idle" };
  * rather than a Server Action + `useActionState` — see
  * `apps/web/app/api/import/route.ts`'s doc comment for why: the
  * sanitisation step depends on a native addon (`sharp`) that Next's
- * Server Actions bundle doesn't load correctly. The UI/UX is otherwise
- * identical to a Server Action form — one submit, one concise inline
- * result, no page navigation.
+ * Server Actions bundle doesn't load correctly.
+ *
+ * Deliberately does NOT render its own result summary — that used to live
+ * only in this component's `useState` and vanished the instant a household
+ * member navigated away and came back (the screenshot-to-budget closure
+ * pass's headline defect). The upload's actual outcome is durably recorded
+ * server-side as an `ImportBatch` (`apps/web/lib/importBatches.ts`) and
+ * rendered by the sibling `RecentImportBatches` server component on this
+ * same page, which is what survives navigation, a reload, or reopening the
+ * app — `router.refresh()` below just makes that section pick up this
+ * upload immediately instead of waiting for the next natural page load.
  */
 export function ImportScreenshotsForm() {
   const [state, setState] = useState<ImportState>(INITIAL_STATE);
   const [isPending, setIsPending] = useState(false);
+  const router = useRouter();
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,11 +40,13 @@ export function ImportScreenshotsForm() {
     setIsPending(true);
     try {
       const response = await fetch("/api/import", { method: "POST", body: formData });
-      const data = (await response.json()) as { summary?: ScreenshotImportSummary; error?: string };
+      const data = (await response.json()) as { summary?: unknown; error?: string };
       if (!response.ok || !data.summary) {
         setState({ status: "error", error: data.error ?? "Something went wrong processing the screenshots." });
       } else {
-        setState({ status: "success", summary: data.summary });
+        setState({ status: "success" });
+        event.currentTarget.reset();
+        router.refresh();
       }
     } catch {
       setState({ status: "error", error: "Something went wrong processing the screenshots." });
@@ -70,39 +81,9 @@ export function ImportScreenshotsForm() {
       )}
 
       {state.status === "success" && (
-        <div className="rounded-xl border p-4 text-sm" style={{ borderColor: "var(--color-border)" }}>
-          <p className="font-medium">
-            {state.summary.screenshotsProcessed} screenshot{state.summary.screenshotsProcessed === 1 ? "" : "s"} processed
-          </p>
-          <ul className="mt-2 flex flex-col gap-1" style={{ color: "var(--color-text-muted)" }}>
-            <li>
-              {state.summary.sourcesDetected.length} source{state.summary.sourcesDetected.length === 1 ? "" : "s"} detected
-              {state.summary.sourcesDetected.length > 0 ? ` (${state.summary.sourcesDetected.join(", ")})` : ""}
-            </li>
-            <li>
-              {state.summary.transactionsFound} transaction{state.summary.transactionsFound === 1 ? "" : "s"} found
-            </li>
-            <li>{state.summary.newTransactions} new</li>
-            <li>{state.summary.alreadyKnown} already known</li>
-            {state.summary.needsReview > 0 && <li>{state.summary.needsReview} need review</li>}
-            {state.summary.screenshotsUnrecognized > 0 && (
-              <li>
-                {state.summary.screenshotsUnrecognized} screenshot{state.summary.screenshotsUnrecognized === 1 ? "" : "s"} couldn&apos;t be read
-              </li>
-            )}
-            {state.summary.unreadableTransactionCount > 0 && (
-              <li style={{ color: "var(--status-behind)" }}>
-                {state.summary.unreadableTransactionCount} transaction{state.summary.unreadableTransactionCount === 1 ? "" : "s"} could not be
-                reliably read — review required
-              </li>
-            )}
-          </ul>
-          {state.summary.needsReview > 0 && (
-            <a href="/transactions?needsReviewOnly=1" className="mt-3 inline-block text-sm font-medium" style={{ color: "var(--color-accent)" }}>
-              Review flagged transactions →
-            </a>
-          )}
-        </div>
+        <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+          Processed — see Recent imports below.
+        </p>
       )}
     </Card>
   );
