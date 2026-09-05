@@ -1,0 +1,38 @@
+{
+  "name": "@frodocodo/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "postinstall": "prisma generate",
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "seed": "tsx prisma/seed.ts",
+    "studio": "prisma studio",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo skip",
+    "build": "prisma generate",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@frodocodo/ledger": "workspace:*",
+    "@frodocodo/providers": "workspace:*",
+    "@frodocodo/shared": "workspace:*",
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.10.5",
+    "prisma": "6.19.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

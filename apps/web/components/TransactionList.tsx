@@ -1,0 +1,60 @@
+import Link from "next/link";
+import { formatAUD } from "@frodocodo/shared";
+import { fromPrismaDecimal } from "@/lib/decimal";
+import { CategoryIcon } from "./CategoryIcon";
+
+interface TransactionListItem {
+  id: string;
+  transactionDate: Date;
+  originalDescription: string;
+  amount: unknown; // Prisma.Decimal
+  direction: "DEBIT" | "CREDIT";
+  status: "PENDING" | "POSTED";
+  merchant: { normalizedName: string } | null;
+  category: { name: string; bucket: { name: string } } | null;
+  possibleDuplicateOfId?: string | null;
+  needsExtractionReview?: boolean;
+}
+
+export function TransactionList({ transactions }: { transactions: TransactionListItem[] }) {
+  if (transactions.length === 0) {
+    return (
+      <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+        No transactions yet.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      {transactions.map((tx) => (
+        <Link
+          key={tx.id}
+          href={`/transactions/${tx.id}`}
+          className="flex items-center gap-3 rounded-2xl border px-3.5 py-3 shadow-[var(--shadow-card)] transition hover:opacity-90"
+          style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
+        >
+          <CategoryIcon name={tx.category?.name ?? "Uncategorized"} size={36} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{tx.merchant?.normalizedName ?? tx.originalDescription}</p>
+            <p className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+              {formatDate(tx.transactionDate)}
+              {tx.category ? ` · ${tx.category.name}` : " · Needs review"}
+              {tx.status === "PENDING" ? " · Pending" : ""}
+              {tx.possibleDuplicateOfId ? " · Possible duplicate" : ""}
+              {tx.needsExtractionReview ? " · Low-confidence read" : ""}
+            </p>
+          </div>
+          <p className="shrink-0 pl-2 text-sm font-semibold" style={{ color: tx.direction === "CREDIT" ? "var(--status-ahead)" : undefined }}>
+            {tx.direction === "CREDIT" ? "+" : "-"}
+            {formatAUD(fromPrismaDecimal(tx.amount))}
+          </p>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function formatDate(date: Date): string {
+  return new Date(date).toLocaleDateString("en-AU", { day: "numeric", month: "short" });
+}

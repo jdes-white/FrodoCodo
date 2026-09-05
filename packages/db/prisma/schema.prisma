@@ -1,0 +1,917 @@
+// FrodoCodo — Household Financial Operating System
+// Domain model per project spec §36. Money is always Decimal — never Float.
+
+// Standard Prisma Client with its native query-engine binary — the
+// well-trodden default. FrodoCodo previously ran on Vercel's serverless
+// platform, where getting this native binary correctly packaged into a
+// deployed function proved unreliable (multiple attempts, each verified
+// locally, each failing in production — see git history / docs/deployment.md
+// for anyone curious). That's a Vercel-serverless-packaging problem, not a
+// problem with the native engine itself: in a normal Docker/Linux
+// container (see Dockerfile), we control the whole filesystem directly —
+// there's no function-packaging step for a binary to go missing from, so
+// there's no reason to prefer the more complex driver-adapter setup
+// (@prisma/adapter-pg + pg) that was built specifically to route around
+// that problem. `binaryTargets` names the runtime platform explicitly:
+// "native" covers local dev on whatever OS you're running, and
+// "debian-openssl-3.0.x" covers the Dockerfile's node:22-bookworm-slim
+// base image.
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  // The app's runtime queries use this — set it to Neon's pooled (PgBouncer)
+  // connection string for a long-lived service like Render's, so many
+  // concurrent requests share a small number of backend connections.
+  url       = env("DATABASE_URL")
+  // `prisma migrate deploy` (and `migrate dev`, `db push`) use this instead
+  // of `url` whenever it's set — Prisma's own first-class support for
+  // exactly the pooled/direct split Neon requires (PgBouncer's transaction
+  // pooling mode doesn't support the advisory locks migrations need). Point
+  // this at Neon's direct (non-pooled) connection string. This replaced a
+  // hand-rolled multi-env-var-name resolver that existed only to guess
+  // which of several names Vercel's Neon integration used — Render just
+  // gets both env vars set explicitly and directly.
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------- Enums ----------
+
+enum HouseholdRole {
+  ADMIN
+  MEMBER
+}
+
+enum AccountType {
+  TRANSACTION
+  CREDIT_CARD
+  SAVINGS
+  OTHER
+}
+
+enum ConnectionMethod {
+  CDR
+  CREDENTIAL_BASED
+  MANUAL
+}
+
+enum ConsentStatus {
+  PENDING
+  ACTIVE
+  EXPIRING
+  EXPIRED
+  REVOKED
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+enum SyncTrigger {
+  SCHEDULED
+  MANUAL
+  INITIAL_IMPORT
+}
+
+enum TransactionDirection {
+  DEBIT
+  CREDIT
+}
+
+enum TransactionStatus {
+  PENDING
+  POSTED
+}
+
+enum ClassificationSource {
+  RULE
+  LEARNED_MAPPING
+  PROVIDER
+  AI
+  USER
+  SYSTEM
+}
+
+// Which ingestion pipeline produced a Transaction row (Task 6B). New
+// sources (CSV, screenshot OCR) plug into the same normalized pipeline —
+// see packages/ledger/src/ingestion.ts — without needing a parallel
+// transaction model or a downstream code path that cares which source ran.
+enum TransactionSourceType {
+  PROVIDER_SYNC
+  CSV_IMPORT
+  SCREENSHOT_IMPORT
+}
+
+enum SpendingType {
+  FIXED_COMMITMENT
+  FLEXIBLE
+  SAVINGS
+}
+
+enum BudgetPeriodType {
+  CALENDAR_MONTH
+  ANCHORED_MONTHLY
+  FORTNIGHTLY
+  CUSTOM
+}
+
+enum BudgetPeriodStatus {
+  ACTIVE
+  CLOSED
+  FUTURE
+}
+
+enum InsightType {
+  PACING
+  PROJECTED_OVERSPEND
+  UNUSUAL_CATEGORY_INCREASE
+  UNUSUAL_MERCHANT_INCREASE
+  SPENDING_SPIKE
+  RECURRING_DETECTED
+  SUBSCRIPTION_DETECTED
+  DUPLICATE_LOOKING_CHARGE
+  UNUSUALLY_LARGE_TRANSACTION
+  CATEGORY_TREND
+  DISCRETIONARY_TREND
+  INCOME_CHANGE
+  FIXED_COST_CHANGE
+  FORGOTTEN_SUBSCRIPTION
+  PERIOD_OVER_PERIOD_COMPARISON
+}
+
+enum InsightSeverity {
+  INFO
+  NOTICE
+  WARNING
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum NotificationType {
+  CATEGORY_APPROACHING_BUDGET
+  OVERSPEND_RISK
+  UNUSUAL_LARGE_TRANSACTION
+  SYNC_FAILURE
+  REVIEW_QUEUE_ITEM
+  PROJECTED_OUTCOME_DETERIORATION
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  PUSH
+}
+
+enum IncomeFrequency {
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+  IRREGULAR
+}
+
+// A manually-entered commitment's optional repeat cadence (§5 of the
+// Upcoming Commitments V1 spec) — deliberately just these three, matching
+// IncomeFrequency's cadence vocabulary minus IRREGULAR (a commitment either
+// repeats on a fixed cadence or it doesn't; there's no "irregular
+// commitment" concept). Null on UpcomingCommitment.recurrence means
+// one-off, not "unset".
+enum CommitmentRecurrence {
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+}
+
+// ---------- Household & users ----------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships     HouseholdMember[]
+  auditEvents     AuditEvent[]
+  aiConversations AIConversation[]
+  aiMessages      AIMessage[]
+  notificationPreferences NotificationPreference[]
+  classifications TransactionClassification[]
+  merchantRules   MerchantRule[]
+  createdCommitments UpcomingCommitment[]
+}
+
+model Household {
+  id                     String           @id @default(cuid())
+  name                   String
+  defaultBudgetPeriodType BudgetPeriodType @default(CALENDAR_MONTH)
+  budgetAnchorDay        Int?
+  timezone               String           @default("Australia/Brisbane")
+  onboardingCompletedAt  DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  members            HouseholdMember[]
+  institutions       FinancialConnection[]
+  categories         Category[]
+  buckets            BudgetBucket[]
+  budgetPeriods      BudgetPeriod[]
+  incomeSources      IncomeSource[]
+  fixedCommitments   FixedCommitment[]
+  savingsGoals       SavingsGoal[]
+  insights           Insight[]
+  aiConversations    AIConversation[]
+  notificationPrefs  NotificationPreference[]
+  auditEvents        AuditEvent[]
+  merchants          Merchant[]
+  merchantRules      MerchantRule[]
+  northStarAssumptions NorthStarAssumptions?
+  upcomingCommitments UpcomingCommitment[]
+}
+
+model HouseholdMember {
+  id          String        @id @default(cuid())
+  householdId String
+  userId      String
+  role        HouseholdRole @default(MEMBER)
+  joinedAt    DateTime      @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, userId])
+  @@index([userId])
+}
+
+// ---------- Financial institutions & connections ----------
+
+model FinancialInstitution {
+  id                       String   @id @default(cuid())
+  name                     String
+  shortName                String
+  country                  String   @default("AU")
+  logoUrl                  String?
+  supportedConnectionMethod ConnectionMethod
+  providerInstitutionId    String
+  providerName             String
+  createdAt                DateTime @default(now())
+
+  connections FinancialConnection[]
+
+  @@unique([providerName, providerInstitutionId])
+}
+
+model FinancialConnection {
+  id                   String           @id @default(cuid())
+  householdId          String
+  institutionId        String
+  providerName         String
+  providerConnectionId String
+  connectionMethod     ConnectionMethod
+  consentStatus        ConsentStatus    @default(PENDING)
+  consentGrantedAt     DateTime?
+  consentExpiresAt     DateTime?
+  // Task 7A credential/token threat model (docs/basiq-integration.md,
+  // docs/banking-data-minimisation-audit.md §8): a provider access/refresh
+  // token, when a provider adapter needs to hold one, is never stored
+  // plaintext. Each envelope is the same AES-256-GCM authenticated
+  // structure `packages/db/src/payloadEncryption.ts` already produces —
+  // `{ v, alg, iv, authTag, ciphertext }` — reused via
+  // `packages/db/src/connectionTokenStorage.ts` rather than a bespoke
+  // scheme. Null for MockProvider (no token exists) and, in Basiq's actual
+  // architecture, for any connection whose per-user session state is held
+  // entirely on Basiq's side rather than handed to FrodoCodo at all — this
+  // column exists to be ready for whichever shape a real token takes, not
+  // because every adapter is guaranteed to populate it.
+  accessTokenEncrypted  Json?
+  refreshTokenEncrypted Json?
+  tokenExpiresAt        DateTime?
+  lastSyncedAt         DateTime?
+  isActive             Boolean          @default(true)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  household   Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  institution FinancialInstitution  @relation(fields: [institutionId], references: [id])
+  accounts    Account[]
+  syncRuns    SyncRun[]
+
+  @@index([householdId])
+}
+
+model Account {
+  id                  String      @id @default(cuid())
+  connectionId        String
+  // Opaque, aggregator-issued identifier — never a bank-format account
+  // number. This plus the household/FrodoCodo alias below is the entire
+  // permanent identity of a connected account (Task 6B data-minimisation).
+  providerAccountId   String
+  // The household-facing label ("CBA", "Virgin", "Amex") — never the
+  // provider's own account nickname. A real CDR/aggregator response can
+  // embed a masked-account-number fragment in its nickname string (e.g.
+  // "Complete Access ...1234"), which is exactly the kind of banking-
+  // identity fragment this product must not surface or persist (see
+  // docs/banking-data-minimisation-audit.md §3/§5). New accounts get a
+  // default derived from the institution's short name
+  // (packages/ledger/src/accountAlias.ts), never from the provider's own
+  // string; the household can rename it. This column was named
+  // `displayName` before Task 6B and held the provider's raw nickname —
+  // renamed (not recreated) so every existing account's current value
+  // carries over untouched.
+  alias               String
+  // Retained deliberately (Task 6B/6C data-minimisation review): a coarse,
+  // FrodoCodo-internal classification (TRANSACTION/CREDIT_CARD/SAVINGS/
+  // OTHER — never a provider product name like "Complete Access" or
+  // "Velocity High Flyer", which lives only in the alias/institution
+  // fields). The one genuine, currently-exercised dependency is
+  // transfer-pair/repayment-kind detection
+  // (packages/ledger/src/transferDetection.ts's debit/credit
+  // CREDIT_CARD_REPAYMENT-vs-INTER_ACCOUNT_TRANSFER distinction) — nothing
+  // reads this field for display or grouping today. This is already the
+  // minimum enumerated classification that distinction needs; there is no
+  // further reduction available without losing that capability.
+  accountType         AccountType
+  currency            String      @default("AUD")
+  // Task 6C data-minimisation review: `currentBalance`/`availableBalance`
+  // were previously kept here on the assumption that "how much do we have
+  // left" needed a bank balance. On review, that's wrong — the product's
+  // "how much is left" answer is *budget remaining*
+  // (`apps/web/lib/budgetSnapshot.ts`'s allocation-minus-spend
+  // calculation), which never reads an account balance; nothing else in
+  // this codebase reads `currentBalance`/`availableBalance` either. No
+  // currently-required feature depends on them, so per the audit's own
+  // principle ("do not retain a banking field merely because the provider
+  // supplies it") they were removed rather than kept "just in case" — see
+  // docs/banking-data-minimisation-audit.md and the Task 6C report for the
+  // full reasoning. A provider's `ProviderAccount.currentBalance`/
+  // `availableBalance` (packages/providers/src/types.ts) are read from the
+  // sync response and then deliberately discarded, never written here.
+  isIncludedInBudget  Boolean     @default(true)
+  lastSyncedAt        DateTime?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  connection   FinancialConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  fixedCommitments FixedCommitment[]
+
+  @@unique([connectionId, providerAccountId])
+}
+
+model SyncRun {
+  id                    String      @id @default(cuid())
+  connectionId          String
+  trigger               SyncTrigger
+  status                SyncStatus  @default(PENDING)
+  startedAt             DateTime    @default(now())
+  completedAt           DateTime?
+  accountsSynced        Int         @default(0)
+  transactionsImported  Int         @default(0)
+  transactionsUpdated   Int         @default(0)
+  errorMessage          String?
+
+  connection   FinancialConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([connectionId, startedAt])
+}
+
+// ---------- Merchants ----------
+
+model Merchant {
+  id               String   @id @default(cuid())
+  householdId      String
+  normalizedName   String
+  matchKey         String
+  defaultCategoryId String?
+  isRecurring      Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  household       Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  defaultCategory Category?     @relation(fields: [defaultCategoryId], references: [id], onDelete: SetNull)
+  transactions    Transaction[]
+  rules           MerchantRule[]
+
+  @@unique([householdId, matchKey])
+}
+
+model MerchantRule {
+  id           String   @id @default(cuid())
+  householdId  String
+  merchantId   String
+  categoryId   String
+  priority     Int      @default(100)
+  createdById  String?
+  createdAt    DateTime @default(now())
+
+  household  Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  category   Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdBy  User?     @relation(fields: [createdById], references: [id])
+
+  @@unique([householdId, merchantId])
+}
+
+// ---------- Budget hierarchy ----------
+
+model BudgetBucket {
+  id          String   @id @default(cuid())
+  householdId String
+  name        String
+  sortOrder   Int      @default(0)
+  colorToken  String   @default("neutral")
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  household  Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  categories Category[]
+
+  @@unique([householdId, name])
+}
+
+model Category {
+  id           String       @id @default(cuid())
+  householdId  String
+  bucketId     String
+  name         String
+  spendingType SpendingType @default(FLEXIBLE)
+  sortOrder    Int          @default(0)
+  isArchived   Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+
+  household         Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  bucket             BudgetBucket        @relation(fields: [bucketId], references: [id], onDelete: Cascade)
+  transactions       Transaction[]
+  suggestedForTransactions Transaction[] @relation("SuggestedCategory")
+  classifications    TransactionClassification[]
+  allocations        BudgetAllocation[]
+  merchantDefaults   Merchant[]
+  merchantRules      MerchantRule[]
+  fixedCommitments   FixedCommitment[]
+  savingsGoals       SavingsGoal[]
+  upcomingCommitments UpcomingCommitment[]
+
+  @@unique([householdId, name])
+  @@index([bucketId])
+}
+
+model BudgetPeriod {
+  id          String             @id @default(cuid())
+  householdId String
+  type        BudgetPeriodType
+  startDate   DateTime           @db.Date
+  endDate     DateTime           @db.Date
+  status      BudgetPeriodStatus @default(ACTIVE)
+  expectedIncome Decimal         @default(0) @db.Decimal(14, 2)
+  bufferAmount   Decimal         @default(0) @db.Decimal(14, 2)
+  createdAt   DateTime           @default(now())
+
+  household   Household          @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  allocations BudgetAllocation[]
+  insights    Insight[]
+
+  @@unique([householdId, startDate, endDate])
+  @@index([householdId, status])
+}
+
+model BudgetAllocation {
+  id             String   @id @default(cuid())
+  budgetPeriodId String
+  categoryId     String
+  amount         Decimal  @db.Decimal(14, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  budgetPeriod BudgetPeriod @relation(fields: [budgetPeriodId], references: [id], onDelete: Cascade)
+  category     Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetPeriodId, categoryId])
+}
+
+model IncomeSource {
+  id                String          @id @default(cuid())
+  householdId       String
+  name              String
+  expectedAmount    Decimal         @db.Decimal(14, 2)
+  frequency         IncomeFrequency
+  nextExpectedDate  DateTime?       @db.Date
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+model FixedCommitment {
+  id                  String   @id @default(cuid())
+  householdId         String
+  categoryId          String
+  accountId           String?
+  name                String
+  expectedAmount      Decimal  @db.Decimal(14, 2)
+  expectedDueDayOfMonth Int?
+  frequency           IncomeFrequency @default(MONTHLY)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category  Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  account   Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+}
+
+model SavingsGoal {
+  id           String    @id @default(cuid())
+  householdId  String
+  categoryId   String?
+  name         String
+  targetAmount Decimal   @db.Decimal(14, 2)
+  targetDate   DateTime? @db.Date
+  currentAmount Decimal  @default(0) @db.Decimal(14, 2)
+  priority     Int       @default(0)
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category  Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+}
+
+// ---------- Upcoming Commitments (manually-tracked known bills, V1) ----------
+
+// A household-maintained forecast item — "we know this bill is coming" —
+// deliberately separate from Transaction (something that actually
+// happened) and from FixedCommitment (a category-level pacing hint used by
+// packages/domain/src/pacing.ts's step-function expected-spend curve).
+// This one drives Home's "Coming Up" widget only: how much of what's left
+// this budget period is already spoken for by bills the household knows
+// about but hasn't paid yet. See apps/web/lib/commitments.ts and
+// packages/domain/src/commitments.ts for the read/calculation logic this
+// feeds.
+model UpcomingCommitment {
+  id              String                @id @default(cuid())
+  householdId     String
+  // Which budget category this bill belongs to — drives the Home Page 2
+  // bucket-card integration (apps/web/components/BucketCard.tsx): a
+  // commitment rolls up into its category's bucket for the "$420 due in
+  // the next 7 days" line. Nullable because commitments predate this field
+  // (existing rows have none) and because the household chooses the
+  // category explicitly when adding/editing one — this is never inferred
+  // from transaction history (see packages/domain/src/commitments.ts).
+  // SetNull rather than Cascade: deleting a category shouldn't silently
+  // delete the household's record of a bill they still owe.
+  categoryId      String?
+  name            String
+  amount          Decimal               @db.Decimal(14, 2)
+  expectedDate    DateTime              @db.Date
+  // Null = one-off. Set = "when marked paid, create the next occurrence"
+  // (apps/web/app/(app)/commitments/actions.ts) — cheap, manual recurrence
+  // per §5 of the spec, not pattern detection from transaction history.
+  recurrence      CommitmentRecurrence?
+  completedAt     DateTime?
+  createdByUserId String?
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category  Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([householdId, expectedDate])
+  @@index([categoryId])
+}
+
+// ---------- Transactions (canonical model, spec §9) ----------
+
+model Transaction {
+  id                     String               @id @default(cuid())
+  accountId              String
+  syncRunId              String?
+  providerTransactionId  String?
+  // A provider's own explicit declaration that this transaction
+  // reverses/links to another one (its providerTransactionId), when a
+  // source actually supplies that (Task 6C, packages/ledger/src/reversalDetection.ts's
+  // tier-1 evidence — trust an explicit provider-supplied linkage before
+  // ever falling back to amount/date/keyword inference). No current
+  // source (MockProvider, the demo seed) populates this; it stays null
+  // for every row until a real provider that supplies such a link is
+  // wired up. Structurally identical in sensitivity to
+  // providerTransactionId itself — a single opaque ID, not a payload.
+  reversalOfProviderTransactionId String?
+  // Which pipeline produced this row (Task 6B, packages/ledger/src/ingestion.ts)
+  // — lets the ledger distinguish a live provider sync from a future CSV or
+  // screenshot import without the categorisation/budgeting engine needing
+  // to know or care which. Every existing row defaults to PROVIDER_SYNC,
+  // which is accurate for all of them: there is no other ingestion path
+  // wired up yet.
+  sourceType             TransactionSourceType @default(PROVIDER_SYNC)
+
+  transactionDate  DateTime @db.Date
+  postingDate      DateTime? @db.Date
+  amount           Decimal  @db.Decimal(14, 2) // always positive magnitude
+  direction        TransactionDirection
+  status           TransactionStatus @default(POSTED)
+
+  originalDescription String
+  normalizedMerchantId String?
+  merchantConfidence   Float?
+
+  categoryId             String?
+  classificationConfidence Float?
+  classificationSource     ClassificationSource?
+  isUserOverridden         Boolean @default(false)
+
+  // The deterministic classifier's best guess when nothing cleared the
+  // auto-classify confidence threshold (resolveClassification's
+  // NEEDS_REVIEW outcome, packages/ledger/src/classification.ts) — kept
+  // entirely separate from categoryId/classificationSource above so a
+  // transaction carrying a suggestion is still unambiguously
+  // uncategorised (categoryId stays null) until a human confirms it. The
+  // reclassify UI uses this only to preselect/hint an option; it's never
+  // read by budget totals or anything else that treats categoryId as the
+  // source of truth. Cleared back to null once the transaction is
+  // actually classified (by the user or by a bulk rule application).
+  suggestedCategoryId         String?
+  suggestedCategorySource     ClassificationSource?
+  suggestedCategoryConfidence Float?
+
+  notes String?
+
+  isRecurring         Boolean @default(false)
+  isTransfer          Boolean @default(false)
+  transferGroupId     String?
+  counterpartTransactionId String? @unique
+  // A same-account, equal-and-opposite reversal of an earlier transaction
+  // on this same account (e.g. a declined/reversed card purchase) — Task
+  // 6A's specific gap: distinct from isTransfer (which always crosses
+  // accounts) and from refundOfTransactionId (merchant-matched, often
+  // weeks later, a separate spend-still-happened-but-was-later-refunded
+  // chain). See packages/ledger/src/reversalDetection.ts. Set on both
+  // legs of a matched reversal pair; counterpartTransactionId links the
+  // earlier (original) leg to the later (reversal) leg, the same way it
+  // links a transfer's debit leg to its credit leg.
+  isReversal          Boolean @default(false)
+
+  isExcludedFromBudget Boolean @default(false)
+
+  refundOfTransactionId String?
+
+  // Screenshot-import dedupe (packages/ledger/src/screenshotDedupe.ts):
+  // set when a screenshot-sourced candidate's account/amount/direction/date
+  // matched an existing (or another new) transaction closely enough to be
+  // *possibly* the same real-world transaction, but not closely enough
+  // (via description) to auto-collapse with confidence — e.g. "COLES 0092"
+  // vs "COLES 0417" on the same day for the same amount. Never set by any
+  // other ingestion path. Non-null is itself the "needs review" flag; no
+  // separate boolean. Cleared (set to null) once a household confirms
+  // either "keep both" or "this is a duplicate" (the latter deletes this
+  // row instead — see apps/web/app/(app)/transactions/[id]/actions.ts).
+  possibleDuplicateOfId String?
+
+  // Screenshot-import extraction uncertainty (screenshot-import hardening
+  // task, packages/ai/src/screenshotExtraction.ts): set when the vision
+  // extractor reported this row below its confidence floor — a plausible,
+  // structurable transaction (never fabricated data) that a household
+  // member should glance at rather than one FrodoCodo silently trusted or
+  // silently dropped. Deliberately a separate flag from
+  // possibleDuplicateOfId above — a row can need review for either reason,
+  // both, or neither. Never set by any other ingestion path (a live
+  // provider sync has no comparable "the model wasn't sure" signal).
+  // Cleared by the household confirming the row is correct (see
+  // clearExtractionReview in apps/web/app/(app)/transactions/[id]/actions.ts).
+  needsExtractionReview Boolean @default(false)
+
+  // Categorisation closure pass (packages/ledger/src/financialMovementDetection.ts):
+  // set when a single-leg transaction's description looks like an internal
+  // transfer, but FrodoCodo cannot confidently confirm that from the
+  // description alone (no matched counterpart leg — see
+  // transferDetection.ts's own, separate, confident-pair matching, which
+  // sets isTransfer/isExcludedFromBudget instead of this flag). Distinct
+  // from needsExtractionReview and possibleDuplicateOfId above: this is
+  // "is this even spending?" uncertainty, not "did we read it right?" or
+  // "have we seen this before?" uncertainty (§5 of the closure pass — the
+  // review queue must be able to tell these apart). categoryId is
+  // deliberately left null while this is set — never guess a spending
+  // category for something that might not be spending. Cleared by the
+  // household confirming either "this is a transfer" (markAsTransfer,
+  // apps/web/app/(app)/transactions/[id]/actions.ts, which also marks
+  // isTransfer/isExcludedFromBudget) or "this is genuine spending"
+  // (confirmAsGenuineSpending, same file), the latter leaving categoryId
+  // null so the row proceeds through ordinary categorisation review.
+  needsFinancialMovementReview Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account          Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  syncRun          SyncRun?      @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+  merchant         Merchant?     @relation(fields: [normalizedMerchantId], references: [id], onDelete: SetNull)
+  category         Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  suggestedCategory Category?    @relation("SuggestedCategory", fields: [suggestedCategoryId], references: [id], onDelete: SetNull)
+  classifications  TransactionClassification[]
+  counterpart      Transaction?  @relation("TransferCounterpart", fields: [counterpartTransactionId], references: [id], onDelete: SetNull)
+  counterpartOf     Transaction? @relation("TransferCounterpart")
+  refundOf         Transaction?  @relation("RefundChain", fields: [refundOfTransactionId], references: [id], onDelete: SetNull)
+  refunds          Transaction[] @relation("RefundChain")
+  possibleDuplicateOf        Transaction?  @relation("PossibleDuplicate", fields: [possibleDuplicateOfId], references: [id], onDelete: SetNull)
+  flaggedAsPossibleDuplicate Transaction[] @relation("PossibleDuplicate")
+  insightEvidence  InsightEvidence[]
+
+  @@unique([accountId, providerTransactionId])
+  @@index([accountId, transactionDate])
+  @@index([categoryId])
+  @@index([status])
+  @@index([isExcludedFromBudget])
+  @@index([possibleDuplicateOfId])
+  @@index([needsExtractionReview])
+  @@index([needsFinancialMovementReview])
+}
+
+model TransactionClassification {
+  id             String               @id @default(cuid())
+  transactionId  String
+  categoryId     String
+  source         ClassificationSource
+  confidence     Float
+  ruleId         String?
+  createdByUserId String?
+  isCurrent      Boolean              @default(true)
+  createdAt      DateTime             @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  category    Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdBy   User?       @relation(fields: [createdByUserId], references: [id])
+
+  @@index([transactionId])
+}
+
+// ---------- Insights ----------
+
+model Insight {
+  id             String          @id @default(cuid())
+  householdId    String
+  budgetPeriodId String?
+  type           InsightType
+  severity       InsightSeverity @default(INFO)
+  title          String
+  summary        String
+  dedupeKey      String
+  isDismissed    Boolean         @default(false)
+  isRead         Boolean         @default(false)
+  generatedAt    DateTime        @default(now())
+
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  budgetPeriod BudgetPeriod? @relation(fields: [budgetPeriodId], references: [id], onDelete: SetNull)
+  evidence     InsightEvidence[]
+
+  @@unique([householdId, dedupeKey])
+  @@index([householdId, generatedAt])
+}
+
+model InsightEvidence {
+  id            String   @id @default(cuid())
+  insightId     String
+  label         String
+  transactionId String?
+  value         Decimal? @db.Decimal(14, 2)
+  metadata      Json?
+
+  insight     Insight      @relation(fields: [insightId], references: [id], onDelete: Cascade)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+}
+
+// ---------- AI ----------
+
+model AIConversation {
+  id          String   @id @default(cuid())
+  householdId String
+  userId      String
+  title       String   @default("New conversation")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  household Household  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id])
+  messages  AIMessage[]
+}
+
+model AIMessage {
+  id              String        @id @default(cuid())
+  conversationId  String
+  userId          String?
+  role            AIMessageRole
+  content         String
+  contextSnapshot Json?
+  createdAt       DateTime      @default(now())
+
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User?          @relation(fields: [userId], references: [id])
+}
+
+// ---------- Notifications ----------
+
+model NotificationPreference {
+  id          String              @id @default(cuid())
+  householdId String
+  userId      String
+  type        NotificationType
+  channel     NotificationChannel @default(IN_APP)
+  isEnabled   Boolean             @default(true)
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@unique([householdId, userId, type, channel])
+}
+
+// ---------- North Star (long-term financial independence direction) ----------
+
+// A household-level (not per-user) set of editable assumptions driving the
+// Employment Dependency model — see packages/domain/src/northStar.ts for
+// the actual calculations. One row per household; getOrCreate'd on first
+// visit (apps/web/lib/northStar.ts) rather than requiring every household
+// to be re-seeded when this table was introduced.
+model NorthStarAssumptions {
+  id          String @id @default(cuid())
+  householdId String @unique
+
+  // "Our life" — today's-dollars annual figures the rest of the model is
+  // built from. lifestyleTarget intentionally folds in the mortgage and
+  // all lifestyle costs as one number (§1 of the spec) rather than being
+  // decomposed — the household updates this periodically as life changes.
+  lifestyleTarget  Decimal @db.Decimal(14, 2)
+  employmentIncome Decimal @db.Decimal(14, 2) // combined after-tax household employment income
+
+  // "Investments"
+  investedAssetsToday       Decimal @db.Decimal(14, 2)
+  incomeProducingPortion    Decimal @db.Decimal(6, 4) // 0-1 fraction of invested assets treated as cash-yield-bearing
+  cashYield                 Decimal @db.Decimal(6, 4) // 0-1 fraction, annual cash yield on the income-producing portion
+  capitalGrowthAssumption   Decimal @db.Decimal(6, 4) // 0-1 fraction, annual capital growth used only for the projection
+  reinvestInvestmentIncome  Boolean @default(true)
+  plannedAnnualContribution Decimal @db.Decimal(14, 2)
+
+  // "Other engines" — already after-tax and after associated costs (§3)
+  sideBusinessIncome Decimal @db.Decimal(14, 2) @default(0)
+  otherPassiveIncome Decimal @db.Decimal(14, 2) @default(0)
+
+  // "Direction" — the destination is deliberately editable, not hard-coded
+  // (§13); timeHorizonYears only bounds the projection table, it isn't a
+  // deadline the model enforces.
+  timeHorizonYears           Int     @default(10)
+  targetEmploymentDependency Decimal @db.Decimal(5, 2) @default(0) // 0-100, 0 = "work optional"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+// ---------- Audit ----------
+
+// Persistent login-attempt log backing apps/web/lib/loginRateLimit.ts
+// (security audit finding H2). Persistent rather than in-memory because
+// Render can restart the container at any time — an in-memory counter
+// would silently reset a brute-force lockout on every restart. `identifier`
+// is the normalized (trimmed, lowercased) email from the login form, kept
+// even for emails that don't correspond to a real user — the limiter must
+// throttle guesses against nonexistent accounts identically to real ones,
+// or its own behaviour would become an account-enumeration oracle.
+// `ipAddress` is best-effort (null when no proxy header is present, e.g.
+// local dev) and is only ever used as a coarse secondary cap, never as the
+// sole key, so two household members sharing one IP never lock each other
+// out. Old rows are pruned opportunistically (see recordLoginAttempt) —
+// there's no need to keep more than a day of this for a two-user household.
+model LoginAttempt {
+  id         String   @id @default(cuid())
+  identifier String
+  ipAddress  String?
+  succeeded  Boolean
+  createdAt  DateTime @default(now())
+
+  @@index([identifier, createdAt])
+  @@index([ipAddress, createdAt])
+}
+
+model AuditEvent {
+  id           String   @id @default(cuid())
+  householdId  String
+  actorUserId  String?
+  action       String
+  entityType   String
+  entityId     String
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  actor     User?     @relation(fields: [actorUserId], references: [id])
+
+  @@index([householdId, createdAt])
+}
