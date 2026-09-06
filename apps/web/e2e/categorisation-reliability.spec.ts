@@ -139,7 +139,12 @@ test.describe("Categorisation reliability", () => {
       await page.goto(`/transactions/${tx.id}`);
       await page.locator('select[name="categoryId"]').selectOption(utilities.id);
       await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(page.getByText("Classified by")).toBeVisible();
+      // Save/Back flow fix: a successful save now redirects (no `from`
+      // context here since this test navigated to the detail page
+      // directly) — waiting for that navigation is what proves the
+      // mutation landed before the DB read below, replacing the old
+      // same-page "Classified by" text check.
+      await expect(page).toHaveURL("/transactions");
 
       await page.goto("/");
       await page.locator("section").first().waitFor();
@@ -198,7 +203,7 @@ test.describe("Categorisation reliability", () => {
       await page.locator('select[name="categoryId"]').selectOption(dining.id);
       // "Always classify this way" left unchecked.
       await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(page.getByText("Classified by")).toBeVisible(); // proves the mutation landed before we read the DB below
+      await expect(page).toHaveURL("/transactions"); // proves the mutation landed before we read the DB below
 
       const refreshedMerchant = await prisma.merchant.findUniqueOrThrow({ where: { id: merchant.id } });
       expect(refreshedMerchant.defaultCategoryId).toBeNull();
@@ -225,7 +230,7 @@ test.describe("Categorisation reliability", () => {
         await page.locator('select[name="categoryId"]').selectOption(dining.id);
         // Never checking "always classify this way" — the mapping must come from repetition, not an explicit rule.
         await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.getByText("Classified by")).toBeVisible();
+        await expect(page).toHaveURL("/transactions");
       }
 
       const refreshedMerchant = await prisma.merchant.findUniqueOrThrow({ where: { id: merchant.id } });
@@ -263,7 +268,7 @@ test.describe("Categorisation reliability", () => {
       await page.locator('select[name="categoryId"]').selectOption(groceries.id);
       await page.getByLabel(/Always classify .* this way/).check();
       await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(page.getByText("Classified by")).toBeVisible();
+      await expect(page).toHaveURL("/transactions");
 
       const refreshedSibling = await prisma.transaction.findUniqueOrThrow({ where: { id: unresolvedSibling.id } });
       expect(refreshedSibling.categoryId).toBe(groceries.id);

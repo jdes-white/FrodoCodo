@@ -18,8 +18,15 @@ import {
 import { Card } from "@/components/Card";
 import { CategoryIcon } from "@/components/CategoryIcon";
 
-export default async function TransactionDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TransactionDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string }>;
+}) {
   const { id } = await params;
+  const { from } = await searchParams;
   const session = await requireSession();
 
   const [transaction, categories] = await Promise.all([
@@ -28,9 +35,14 @@ export default async function TransactionDetailPage({ params }: { params: Promis
   ]);
   if (!transaction) notFound();
 
+  // Save/Back flow fix: only ever navigate back within this app's own
+  // Transactions views — never trust `from` as an arbitrary redirect target
+  // (it's a client-controlled query param).
+  const backHref = isSafeTransactionsPath(from) ? from : "/transactions";
+
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/transactions" className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+      <Link href={backHref} className="text-sm" style={{ color: "var(--color-text-muted)" }}>
         ← Back to transactions
       </Link>
 
@@ -167,6 +179,7 @@ export default async function TransactionDetailPage({ params }: { params: Promis
         )}
         <form action={reclassifyTransaction} className="flex flex-col gap-3">
           <input type="hidden" name="transactionId" value={transaction.id} />
+          <input type="hidden" name="returnTo" value={backHref} />
           <select
             name="categoryId"
             defaultValue={transaction.categoryId ?? transaction.suggestedCategoryId ?? ""}
@@ -237,6 +250,16 @@ export default async function TransactionDetailPage({ params }: { params: Promis
       </Card>
     </div>
   );
+}
+
+/**
+ * `from`/`returnTo` is a client-controlled query param — only ever treated
+ * as a navigation target within this app's own Transactions views, never
+ * passed through to `redirect()` or `Link` unchecked (an open-redirect/IDOR
+ * concern the same way category ownership is validated in actions.ts).
+ */
+function isSafeTransactionsPath(path: string | undefined): path is string {
+  return typeof path === "string" && path.startsWith("/transactions") && !path.startsWith("//") && !path.includes("://");
 }
 
 function formatSource(source: string): string {

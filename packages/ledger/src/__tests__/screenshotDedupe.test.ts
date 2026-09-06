@@ -99,6 +99,41 @@ describe("resolveScreenshotBatch — pending to posted matching", () => {
     const outcomes = resolveScreenshotBatch([postedCandidate], [pendingExisting]);
     expect(outcomes[0]!.action).toBe("INSERT");
   });
+
+  /**
+   * Screenshot-to-budget acceptance-test defect 3 (real production
+   * transactions all showing Pending): the plausible real-world scenario
+   * this covers is a household uploading many screenshots in one batch —
+   * some older (showing a transaction as it looked days ago, PENDING) and
+   * some newer (the same transaction now POSTED) — with no existing DB row
+   * yet, so this is a same-batch candidate-vs-candidate collapse, not the
+   * existing-row case above. Confirms the dedupe algorithm already prefers
+   * POSTED over PENDING when picking which candidate to keep, and never
+   * inserts the pending one alongside it (which would double-count the
+   * same real transaction).
+   */
+  it("prefers the POSTED version over the PENDING version when both appear as new candidates in the same batch, and never inserts both", () => {
+    const pendingCandidate = candidate({ sourceKey: "screenshot-old", status: "PENDING", transactionDate: "2026-08-27" });
+    const postedCandidate = candidate({ sourceKey: "screenshot-new", status: "POSTED", transactionDate: "2026-08-30" });
+    const outcomes = resolveScreenshotBatch([pendingCandidate, postedCandidate], []);
+
+    const posted = outcomes[1]!;
+    const pending = outcomes[0]!;
+    expect(posted.action).toBe("INSERT");
+    expect(pending.action).toBe("SKIP_DUPLICATE_OF_CANDIDATE");
+    // Exactly one row will ever be created for this real-world transaction,
+    // and it carries the POSTED status — never left stuck at PENDING.
+    expect(outcomes.filter((o) => o.action === "INSERT")).toHaveLength(1);
+  });
+
+  it("is order-independent for the same-batch pending/posted preference — posted still wins regardless of array order", () => {
+    const pendingCandidate = candidate({ sourceKey: "screenshot-old", status: "PENDING", transactionDate: "2026-08-27" });
+    const postedCandidate = candidate({ sourceKey: "screenshot-new", status: "POSTED", transactionDate: "2026-08-30" });
+    const outcomes = resolveScreenshotBatch([postedCandidate, pendingCandidate], []);
+
+    expect(outcomes[0]!.action).toBe("INSERT"); // postedCandidate, now at index 0
+    expect(outcomes[1]!.action).toBe("SKIP_DUPLICATE_OF_CANDIDATE");
+  });
 });
 
 describe("resolveScreenshotBatch — wrapped/truncated descriptions still match", () => {

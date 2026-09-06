@@ -42,6 +42,7 @@ test("household can log in, see budget position, drill into a bucket, and reclas
   await page.goto("/transactions?needsReviewOnly=1");
   const reviewItem = page.locator('a[href^="/transactions/"]').first();
   await expect(reviewItem).toBeVisible();
+  const reviewItemHref = await reviewItem.getAttribute("href");
   await reviewItem.click();
 
   // Reclassify: pick the first real category option and save (§32).
@@ -52,8 +53,17 @@ test("household can log in, see budget position, drill into a bucket, and reclas
   await select.selectOption(value!);
   await page.getByRole("button", { name: "Save", exact: true }).click();
 
-  // The transaction should no longer show "Needs review" once classified.
-  await expect(page.getByText("Needs review")).toHaveCount(0);
+  // Save/Back flow fix: a successful save returns to the exact filtered
+  // review list the household drilled in from, rather than leaving them on
+  // the detail page with no visible confirmation anything happened.
+  await expect(page).toHaveURL("/transactions?needsReviewOnly=1");
+
+  // The just-classified transaction should no longer appear in this
+  // filtered view (scoped to its own link rather than a page-wide "Needs
+  // review" text search, since other genuinely-unresolved seed items may
+  // legitimately still be present).
+  const transactionId = reviewItemHref!.split("/transactions/")[1]!.split("?")[0];
+  await expect(page.locator(`a[href^="/transactions/${transactionId}"]`)).toHaveCount(0);
 });
 
 test("insights page answers a question about the budget without leaving the app", async ({ page }) => {

@@ -45,6 +45,7 @@ export async function reclassifyTransaction(formData: FormData): Promise<void> {
   const transactionId = String(formData.get("transactionId"));
   const categoryId = String(formData.get("categoryId"));
   const applyToFutureFromMerchant = formData.get("applyToFutureFromMerchant") === "on";
+  const returnTo = safeTransactionsReturnPath(formData.get("returnTo"));
 
   const transaction = await prisma.transaction.findFirstOrThrow({
     where: { id: transactionId, account: { connection: { householdId: session.householdId } } },
@@ -80,6 +81,19 @@ export async function reclassifyTransaction(formData: FormData): Promise<void> {
         suggestedCategoryId: null,
         suggestedCategorySource: null,
         suggestedCategoryConfidence: null,
+        // Deliberately explicit category picks resolve extraction and
+        // financial-movement uncertainty too, not just categorisation: to
+        // pick a specific real category the household necessarily read the
+        // description/amount correctly (extraction) and confirmed this is
+        // genuine spending (financial movement) — leaving either flag set
+        // afterward left a fully-categorised transaction stuck in the
+        // "needs review" filter for a reason the household had already, in
+        // effect, resolved (categorisation closure pass acceptance defect).
+        // possibleDuplicateOfId is deliberately left untouched — whether
+        // this is a duplicate of another row is orthogonal to what category
+        // it belongs in and needs its own explicit resolution.
+        needsExtractionReview: false,
+        needsFinancialMovementReview: false,
       },
     });
     await tx.transactionClassification.create({
@@ -138,6 +152,25 @@ export async function reclassifyTransaction(formData: FormData): Promise<void> {
   revalidatePath(`/transactions/${transactionId}`);
   revalidatePath("/transactions");
   revalidatePath("/");
+
+  // Save/Back flow fix: without this, submitting the form just revalidated
+  // data in place with no navigation at all — indistinguishable from doing
+  // nothing. Returns to the exact filtered list the household drilled in
+  // from (still "Needs review only", still the same month) rather than
+  // resetting to a bare, unfiltered /transactions.
+  redirect(returnTo ?? "/transactions");
+}
+
+/**
+ * `returnTo` is a client-controlled hidden form field — only ever treated
+ * as a same-app Transactions navigation target, never passed to `redirect()`
+ * unchecked (an open-redirect concern, the same reasoning as the category
+ * ownership check above).
+ */
+function safeTransactionsReturnPath(value: FormDataEntryValue | null): string | null {
+  if (typeof value !== "string") return null;
+  if (!value.startsWith("/transactions") || value.startsWith("//") || value.includes("://")) return null;
+  return value;
 }
 
 /**
@@ -174,6 +207,12 @@ async function applyRuleToUnresolvedSiblings(
       suggestedCategoryId: null,
       suggestedCategorySource: null,
       suggestedCategoryConfidence: null,
+      // Same reasoning as the primary transaction's own update above — a
+      // rule now confidently classifies these too, so they shouldn't stay
+      // stuck in "needs review" for extraction/financial-movement reasons
+      // this same action has, in effect, already resolved for them.
+      needsExtractionReview: false,
+      needsFinancialMovementReview: false,
     },
   });
   await tx.transactionClassification.createMany({

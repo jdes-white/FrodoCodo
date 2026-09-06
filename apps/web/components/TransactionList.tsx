@@ -16,7 +16,14 @@ interface TransactionListItem {
   needsExtractionReview?: boolean;
 }
 
-export function TransactionList({ transactions }: { transactions: TransactionListItem[] }) {
+export function TransactionList({
+  transactions,
+  returnTo,
+}: {
+  transactions: TransactionListItem[];
+  /** Current list URL (path + query string) — carried onto each detail link so "Back to transactions" and a post-save redirect return to this exact filtered view instead of a bare `/transactions`. */
+  returnTo?: string;
+}) {
   if (transactions.length === 0) {
     return (
       <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
@@ -30,7 +37,7 @@ export function TransactionList({ transactions }: { transactions: TransactionLis
       {transactions.map((tx) => (
         <Link
           key={tx.id}
-          href={`/transactions/${tx.id}`}
+          href={returnTo ? `/transactions/${tx.id}?from=${encodeURIComponent(returnTo)}` : `/transactions/${tx.id}`}
           className="flex items-center gap-3 rounded-2xl border px-3.5 py-3 shadow-[var(--shadow-card)] transition hover:opacity-90"
           style={{ background: "var(--color-surface)", borderColor: "var(--color-border)" }}
         >

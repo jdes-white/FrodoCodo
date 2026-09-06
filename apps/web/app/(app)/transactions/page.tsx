@@ -69,7 +69,26 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
         }}
       />
       <TransactionFiltersForm categories={categories} accounts={accounts} current={{ ...params, month }} />
-      <TransactionList transactions={transactions} />
+      <TransactionList transactions={transactions} returnTo={buildReturnTo(params, month)} />
     </div>
   );
+}
+
+/**
+ * Save/Back flow fix: the exact filtered list a household member drilled
+ * into a transaction from — carried onto each detail link as `?from=` so
+ * both "Back to transactions" and a successful reclassify Save return to
+ * this same view (still checked "Needs review only", still on the same
+ * month, etc.) instead of resetting to a bare, unfiltered `/transactions`.
+ */
+function buildReturnTo(params: SearchParams, month: string): string {
+  const query = new URLSearchParams();
+  if (params.categoryId) query.set("categoryId", params.categoryId);
+  if (params.accountId) query.set("accountId", params.accountId);
+  if (params.merchantQuery) query.set("merchantQuery", params.merchantQuery);
+  if (params.needsReviewOnly) query.set("needsReviewOnly", params.needsReviewOnly);
+  if (params.importBatchId) query.set("importBatchId", params.importBatchId);
+  if (params.month) query.set("month", month);
+  const qs = query.toString();
+  return qs ? `/transactions?${qs}` : "/transactions";
 }
