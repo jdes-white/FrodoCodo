@@ -49,7 +49,18 @@ export function ImportScreenshotsForm() {
         router.refresh();
       }
     } catch {
-      setState({ status: "error", error: "Something went wrong processing the screenshots." });
+      // Reaches here when the response itself never arrived intact —
+      // `fetch` threw (connection dropped/reset) or the body wasn't valid
+      // JSON (e.g. a proxy's own timeout page instead of the app's real
+      // response). The most common real cause is the container having been
+      // idle and still starting up, or genuine slowness for a large batch —
+      // both resolved by waiting and retrying, so say that rather than a
+      // bare "something went wrong".
+      setState({
+        status: "error",
+        error:
+          "The request didn't complete. If the app had been idle, the server may still be starting up — wait a few seconds and try again.",
+      });
     } finally {
       setIsPending(false);
     }

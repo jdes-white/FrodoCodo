@@ -17,6 +17,7 @@ import {
 } from "./actions";
 import { Card } from "@/components/Card";
 import { CategoryIcon } from "@/components/CategoryIcon";
+import { SaveButton } from "./SaveButton";
 
 export default async function TransactionDetailPage({
   params,
@@ -202,13 +203,7 @@ export default async function TransactionDetailPage({
               Always classify {transaction.merchant.normalizedName} this way
             </label>
           )}
-          <button
-            type="submit"
-            className="self-start rounded-lg px-4 py-2 text-sm font-medium text-white"
-            style={{ background: "var(--color-accent)" }}
-          >
-            Save
-          </button>
+          <SaveButton />
         </form>
       </Card>
 

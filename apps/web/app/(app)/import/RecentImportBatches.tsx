@@ -1,5 +1,6 @@
 import { Card } from "@/components/Card";
 import type { ImportBatchSummary } from "@/lib/importBatches";
+import { formatBrisbaneTime } from "@/lib/formatBrisbaneTime";
 
 /**
  * Screenshot-to-budget closure pass: the durable counterpart to
@@ -32,15 +33,18 @@ export function RecentImportBatches({ batches }: { batches: ImportBatchSummary[]
   );
 }
 
+/**
+ * `ImportBatch.createdAt` is stored correctly in UTC — see
+ * `apps/web/lib/formatBrisbaneTime.ts` for why an explicit IANA timezone is
+ * used for display rather than the ambient server/browser default.
+ */
 function BatchRow({ batch }: { batch: ImportBatchSummary }) {
   const createdRowCount = batch.transactionsFound - batch.alreadyKnownCount;
   const outcomes = batch.outcomeCounts;
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="font-medium">
-        {new Date(batch.createdAt).toLocaleString("en-AU", { dateStyle: "medium", timeStyle: "short" })}
-      </p>
+      <p className="font-medium">{formatBrisbaneTime(new Date(batch.createdAt))}</p>
 
       <p style={{ color: "var(--color-text-muted)" }}>
         {batch.screenshotsProcessed} screenshot{batch.screenshotsProcessed === 1 ? "" : "s"} processed

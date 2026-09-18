@@ -76,6 +76,32 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({ summary });
   } catch (err) {
-    return NextResponse.json({ error: err instanceof Error ? err.message : "Something went wrong processing the screenshots." }, { status: 500 });
+    // Privacy-safe: an error's class name and message can be logged (never
+    // image bytes, and screenshot descriptions never reach this catch block
+    // as error text — the pipeline's own extraction/classification failures
+    // are already handled internally and never throw for that reason) —
+    // this is what makes a real production failure traceable at all, since
+    // the client-facing message below is deliberately generic.
+    console.log(
+      JSON.stringify({
+        scope: "screenshotImport",
+        event: "request_failed",
+        errorType: err instanceof Error ? err.constructor.name : typeof err,
+        reason: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    // Never the raw err.message here — a thrown Prisma/SDK error can carry
+    // internal detail (query shapes, connection info) that has no business
+    // reaching the browser. Specific enough to act on without guessing:
+    // the most common real-world cause is the free-tier container having
+    // been idle and still starting up, or genuine service slowness for a
+    // multi-screenshot batch, both of which a retry resolves.
+    return NextResponse.json(
+      {
+        error:
+          "We couldn't finish processing those screenshots. If the app had been idle, the server may still be starting up — wait a few seconds and try again. If it keeps happening, try with fewer screenshots at once.",
+      },
+      { status: 500 },
+    );
   }
 }
