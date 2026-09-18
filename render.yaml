@@ -1,0 +1,121 @@
+# Render Blueprint for FrodoCodo's web app (apps/web). Import this repo on
+# Render and it reads this file automatically to configure the service —
+# no manual build/start command entry needed, since the Dockerfile defines
+# both.
+#
+# Deliberately minimal: only the web service for the current beta. The
+# background worker (apps/worker) is not deployed — the web app doesn't
+# depend on it (dashboard reads directly from Postgres) — and no
+# additional infrastructure (Redis, queues, a second database) is
+# declared, per the current beta's actual requirements. See
+# docs/deployment.md.
+#
+# apps/web/scripts/start.sh runs `prisma migrate deploy` on every container
+# start, before Next.js binds its port — see that script and
+# docs/deployment.md's "Migrations" section for the full reasoning (this
+# replaced an earlier by-hand migration policy after a deploy shipped code
+# ahead of its migration and crashed the whole app). That means the owner
+# now has to supply *two* connection strings, not one: DATABASE_URL (the
+# pooled/runtime string the running app reads) and DIRECT_URL (the
+# direct/non-pooled string Prisma's migrate commands need — PgBouncer's
+# transaction pooling mode doesn't support the advisory locks migrations
+# take). Both point at the same Neon database. AUTH_SECRET and SEED_TOKEN
+# use Render's `generateValue: true`, which has Render generate a fresh,
+# secure random value itself at first deploy; neither needs to match any
+# previously-used value for this milestone (see below for what that costs).
+#
+# NOTE for whoever imports this: verify the field names below against
+# Render's current Blueprint schema in their dashboard/docs at import time.
+# This file was written without live access to Render's documentation (see
+# docs/deployment.md for why) — the values reflect the well-established,
+# long-standing Render Blueprint spec, but Render's schema does evolve, and
+# this hasn't been round-tripped through an actual Render import.
+services:
+  - type: web
+    name: frodocodo
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    branch: claude/household-financial-os-90nezc
+    autoDeploy: true
+    # Plain liveness check (apps/web/app/api/health/route.ts) — no database
+    # access. Deliberately NOT /api/health/db: a transient Neon hiccup
+    # shouldn't make Render think the whole service is down and restart it.
+    # Check /api/health/db directly (see docs/deployment.md) to verify the
+    # database specifically.
+    healthCheckPath: /api/health
+    envVars:
+      # --- The two secrets the owner must supply, both pointing at the
+      # existing Neon database: `sync: false` tells Render each value is
+      # expected but not defined here — never committed.
+      # DATABASE_URL: the pooled/runtime connection string (PgBouncer,
+      #   transaction mode) — this is the one the running app actually
+      #   queries through, and the one that was already configured before
+      #   automatic migrations existed.
+      - key: DATABASE_URL
+        sync: false
+      # DIRECT_URL: the direct/non-pooled connection string — only
+      # apps/web/scripts/start.sh's `prisma migrate deploy` step reads
+      # this (matches packages/db/prisma/schema.prisma's `directUrl`
+      # datasource field); the running Next.js app never touches it. Get
+      # this from the Neon dashboard's "Connection Details" panel — it's
+      # the same-looking connection string as DATABASE_URL but without
+      # `-pooler` in the hostname (Neon's pooled and direct endpoints
+      # differ by that one hostname segment; everything else — user,
+      # password, database name — is identical).
+      - key: DIRECT_URL
+        sync: false
+      # --- Secrets Render generates itself at first deploy. Fresh values
+      # are fine for this milestone: AUTH_SECRET only needs to be stable
+      # *going forward* (existing sessions, all created against whatever
+      # secret Vercel used, will simply need users to log in again once —
+      # there's no stored user data that depends on its value), and
+      # SEED_TOKEN only gates the demo-reseed endpoint, which isn't being
+      # called as part of this milestone.
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: SEED_TOKEN
+        generateValue: true
+      # --- Non-secret configuration for the current beta ---
+      - key: NODE_ENV
+        value: production
+      - key: FINANCIAL_PROVIDER
+        value: mock
+      # AI_PROVIDER stays "stub" by deliberate default — CLAUDE.md rule 8
+      # ("AI is an enhancement, never a dependency for core operation") and
+      # docs/deployment.md's "Future architecture awareness" section both
+      # document this as an intentional beta choice, not an oversight.
+      # Flipping it to "anthropic" is a product decision for the owner to
+      # make explicitly (it adds a paid external dependency), not something
+      # this blueprint should default to on its own — see the two keys
+      # below for what else that flip requires.
+      - key: AI_PROVIDER
+        value: stub
+      # ANTHROPIC_API_KEY / ANTHROPIC_MODEL: only take effect once
+      # AI_PROVIDER is switched to "anthropic" above (see
+      # apps/web/lib/screenshotExtractorFactory.ts's gate) — needed for
+      # screenshot import (apps/web/lib/screenshotImport.ts) to actually
+      # read a real banking screenshot rather than failing closed with
+      # "no AI vision provider is configured". Declared here as `sync:
+      # false` (same pattern as DATABASE_URL/DIRECT_URL above) so Render
+      # recognizes and preserves a dashboard-entered value across a
+      # blueprint sync instead of it being an undeclared, unprotected
+      # variable — this does not itself enable anthropic; AI_PROVIDER
+      # above still has to be switched too, and a real key value still has
+      # to be pasted into the Render dashboard (never commit one here).
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false
+      # --- Not currently required — left unset intentionally ---
+      # BASIQ_API_KEY: only if FINANCIAL_PROVIDER=basiq (see
+      #   docs/basiq-integration.md before ever setting this — the adapter
+      #   exists but has never been connected to a live account).
+      # APP_ENCRYPTION_KEY (packages/db/src/payloadEncryption.ts): required
+      #   before FINANCIAL_PROVIDER=basiq is ever set for real — a real
+      #   connection's provider token must be encrypted at rest
+      #   (docs/basiq-integration.md), and encryptForStorage() throws in
+      #   production without this key rather than persisting one unencrypted.
+      # WORKER_SYNC_INTERVAL_MINUTES: only relevant if apps/worker is ever
+      #   deployed as its own service.

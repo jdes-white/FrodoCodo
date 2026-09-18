@@ -1,0 +1,233 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens (visual reference: purple-accented, card-based design with
+ * a circular hero progress ring on the dashboard, adapted rather than
+ * copied verbatim — see docs/architecture.md / CLAUDE.md for the product
+ * principles this still has to respect). Two token groups:
+ *
+ *  - --color-* / --cat-*: the actual design system (surfaces, text, the
+ *    purple brand accent, and an 8-color category/bucket accent palette
+ *    used by lib/categoryVisuals.ts for icon badges and progress fills).
+ *  - --status-*: semantic pacing colors (ahead/on-track/behind). Kept
+ *    deliberately separate from --color-accent — pacing status is
+ *    information the household relies on at a glance, so its color
+ *    can't just become "whatever the brand accent is this season."
+ *
+ * No manual theme toggle exists in this app, so dark mode is driven
+ * purely by `prefers-color-scheme`, matching the device/system setting
+ * automatically.
+ */
+
+:root {
+  --color-bg: #f8f7fc;
+  --color-surface: #ffffff;
+  --color-border: #e9e5f5;
+  --color-text: #1c1730;
+  --color-text-muted: #786f92;
+
+  --color-accent: #7c5cfc;
+  --color-accent-strong: #5b3fc4;
+  --color-accent-soft: #efeafc;
+
+  --status-ahead: #21966b;
+  --status-ahead-soft: #e3f6ec;
+  --status-on-track: #4a6fd1;
+  --status-on-track-soft: #e9edfb;
+  --status-behind: #c96a1c;
+  --status-behind-soft: #faead9;
+  --status-off-track: #d6473f;
+  --status-off-track-soft: #fce3e1;
+
+  /* Home's pacing ring (components/PacingRing.tsx): five anchor colors for
+     a continuous dark-green -> light-green -> yellow -> orange -> red
+     gradient driven by lib/pacePosition.ts's paceGradientColor() via
+     CSS color-mix() — deliberately a *separate* palette from --status-*
+     above (which stays exactly as-is for Insights and everywhere else
+     still on the older 4-tier SpendPaceStatus). Solid variants color the
+     arc/pill text; -soft variants are the pill background, same pairing
+     convention as --status-*-soft. */
+  --pace-comfortable: #0f7a46;
+  --pace-comfortable-soft: #e0f3e8;
+  --pace-ahead: #4f9e78;
+  --pace-ahead-soft: #e6f3ec;
+  --pace-neutral: #b8860b;
+  --pace-neutral-soft: #faf1d8;
+  --pace-over: #d97a1f;
+  --pace-over-soft: #fbead9;
+  --pace-critical: #d6473f;
+  --pace-critical-soft: #fce3e1;
+
+  /* Fixed layout metrics (not colors) so Home's paginated panels can be
+     position:fixed directly between the app header and the bottom nav
+     (top: var(--app-header-h); bottom: var(--app-nav-h) — see
+     components/PagedPanels.tsx) instead of computed via calc(100dvh - ...)
+     arithmetic that has to guess at surrounding padding (<main>'s py-6,
+     the app shell's pb-20) and drifted out of sync with real devices.
+     Fixed positioning is measured against the viewport directly, so it
+     never depends on that surrounding padding at all. Both the header
+     ((app)/layout.tsx) and NavBar's mobile bar are given matching explicit
+     heights (h-16 / h-14) so these two values are reliable. */
+  --app-header-h: 64px;
+  --app-nav-h: calc(56px + env(safe-area-inset-bottom));
+
+  --cat-1: #ea8c14;
+  --cat-1-soft: #fdedd3;
+  --cat-2: #0f9c8c;
+  --cat-2-soft: #dcf3ef;
+  --cat-3: #e34f83;
+  --cat-3-soft: #fbe4ec;
+  --cat-4: #8b5cf6;
+  --cat-4-soft: #efeafc;
+  --cat-5: #3b7ff0;
+  --cat-5-soft: #e3edfd;
+  --cat-6: #29a865;
+  --cat-6-soft: #dff5e8;
+  --cat-7: #6366f1;
+  --cat-7-soft: #e6e6fd;
+  --cat-8: #d6469a;
+  --cat-8-soft: #fbe3f1;
+
+  --shadow-card: 0 1px 2px rgba(28, 23, 48, 0.04), 0 10px 24px -14px rgba(28, 23, 48, 0.16);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #100c1c;
+    --color-surface: #1c1730;
+    --color-border: #322a4d;
+    --color-text: #f3f1fa;
+    --color-text-muted: #a199b8;
+
+    --color-accent: #9b7dff;
+    --color-accent-strong: #7c5cfc;
+    --color-accent-soft: #29234a;
+
+    --status-ahead: #4bd08d;
+    --status-ahead-soft: #163828;
+    --status-on-track: #85a6f5;
+    --status-on-track-soft: #1d2748;
+    --status-behind: #f0a24e;
+    --status-behind-soft: #3b2a16;
+    --status-off-track: #f26860;
+    --status-off-track-soft: #3a1a18;
+
+    --pace-comfortable: #24cf83;
+    --pace-comfortable-soft: #123826;
+    --pace-ahead: #7fd6ac;
+    --pace-ahead-soft: #17342a;
+    --pace-neutral: #eec460;
+    --pace-neutral-soft: #3a2f12;
+    --pace-over: #f5a555;
+    --pace-over-soft: #3b2a16;
+    --pace-critical: #f26860;
+    --pace-critical-soft: #3a1a18;
+
+    --cat-1: #f5a83e;
+    --cat-1-soft: #3a2b12;
+    --cat-2: #2bcab6;
+    --cat-2-soft: #123531;
+    --cat-3: #f0709f;
+    --cat-3-soft: #3a1f2c;
+    --cat-4: #a78bfa;
+    --cat-4-soft: #29234a;
+    --cat-5: #6ea1f7;
+    --cat-5-soft: #1c2a4a;
+    --cat-6: #4ecb8a;
+    --cat-6-soft: #163828;
+    --cat-7: #8789f7;
+    --cat-7-soft: #262358;
+    --cat-8: #ec7ec0;
+    --cat-8-soft: #3a1f36;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 24px -14px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/*
+ * Home hero backdrop: evokes the reference's dawn/dusk sky behind the
+ * progress ring using CSS gradients rather than an embedded photo/
+ * illustration asset — scales to any viewport for free, adds no image
+ * weight, and swaps cleanly between light (warm dawn) and dark (night
+ * sky) instead of needing two separate image files.
+ */
+.hero-sky {
+  background:
+    radial-gradient(120% 90% at 80% -10%, rgba(255, 205, 150, 0.55) 0%, rgba(255, 205, 150, 0) 55%),
+    linear-gradient(165deg, #cdbdf2 0%, #e9c9e6 45%, #fbe0c9 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .hero-sky {
+    background:
+      radial-gradient(120% 90% at 80% -10%, rgba(155, 125, 255, 0.35) 0%, rgba(155, 125, 255, 0) 55%),
+      linear-gradient(165deg, #1c1533 0%, #241a3f 50%, #150f28 100%);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  /* Belt-and-braces alongside the viewport meta config (app/layout.tsx):
+     nothing in this app's layout is expected to exceed the viewport
+     width, but this guarantees an errant wide child (e.g. unbroken long
+     text) clips instead of introducing sideways panning. */
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+}
+
+/* Home's panel container scrolls (for scroll-snap paging) but should only
+   ever be driven by the swipe gesture + the custom dot indicator, never a
+   visible native scrollbar competing for the same real estate. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* old Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Safari/Chrome/WebKit — what iOS uses */
+}
+
+/* Invisible overlay slider for North Star's dependency dial
+   (components/DependencyDial.tsx) — a real <input type="range"> layered
+   over a custom SVG arc so dragging gets native touch/mouse/keyboard
+   support for free. Only the SVG marker it drives is meant to be visible,
+   so the input itself (track + thumb) is made fully transparent while
+   keeping a generously sized thumb as the actual touch target. */
+.dial-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  opacity: 0;
+  margin: 0;
+}
+.dial-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 44px;
+  height: 44px;
+}
+.dial-range::-moz-range-thumb {
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: transparent;
+}
+.dial-range::-moz-range-track {
+  background: transparent;
+}
