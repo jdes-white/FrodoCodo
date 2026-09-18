@@ -126,13 +126,29 @@ export async function importScreenshotBatch(
     source: ScreenshotSource;
     rows: ExtractedTransactionCandidate[];
   }
-  const extractions: Extraction[] = [];
-  let screenshotsUnrecognized = 0;
-  let unreadableTransactionCount = 0;
+  interface PerFileOutcome {
+    unrecognized: boolean;
+    unreadableRows: number;
+    extraction: Extraction | null;
+  }
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]!;
-
+  /**
+   * Production defect: screenshots were sanitised and vision-extracted one
+   * at a time (sequential `for` + `await`) — for a real multi-screenshot
+   * upload, each Anthropic vision call taking several seconds compounded
+   * into a total request duration long enough to exceed the platform's own
+   * connection timeout, so the browser's `fetch` never received a response
+   * even though the server went on to finish (and often succeeded)
+   * regardless. Running every screenshot's sanitize+extract concurrently
+   * cuts wall-clock time from roughly N x (one call) down to about one
+   * call's worth, independent of how many screenshots are in the batch —
+   * the actual fix, not a workaround around it. Each file's outcome is
+   * fully independent of every other's (no shared mutable state, no
+   * ordering requirement downstream — `sourceKey` already encodes the
+   * original index), so nothing about the result changes, only when it
+   * arrives.
+   */
+  async function processFile(file: ScreenshotFileInput, index: number): Promise<PerFileOutcome> {
     const sanitized = await sanitizeScreenshot(file.buffer, file.mediaType);
     if (sanitized.status === "UNSUPPORTED_LAYOUT") {
       // Fails closed: the original bytes are never forwarded to the
@@ -144,8 +160,7 @@ export async function importScreenshotBatch(
       // module's doc comment). The reason string here is always one of
       // sanitizeScreenshot's own static, content-free messages.
       console.log(JSON.stringify({ scope: "screenshotImport", event: "sanitization_rejected", reason: sanitized.reason }));
-      screenshotsUnrecognized++;
-      continue;
+      return { unrecognized: true, unreadableRows: 0, extraction: null };
     }
 
     let result;
@@ -162,13 +177,29 @@ export async function importScreenshotBatch(
       // message or an SDK/HTTP error message — never user-supplied image
       // content.
       console.log(JSON.stringify({ scope: "screenshotImport", event: "extraction_failed", layout: sanitized.layout, reason: result.reason }));
-      screenshotsUnrecognized++;
-      continue;
+      return { unrecognized: true, unreadableRows: 0, extraction: null };
     }
 
-    unreadableTransactionCount += result.unparseableRowCount;
-    if (result.transactions.length === 0) continue; // recognized, but nothing usable extracted — not an "unrecognized" screenshot
-    extractions.push({ sourceKey: `screenshot-${i}`, source: sanitized.layout, rows: result.transactions });
+    if (result.transactions.length === 0) {
+      // Recognized, but nothing usable extracted — not an "unrecognized" screenshot.
+      return { unrecognized: false, unreadableRows: result.unparseableRowCount, extraction: null };
+    }
+    return {
+      unrecognized: false,
+      unreadableRows: result.unparseableRowCount,
+      extraction: { sourceKey: `screenshot-${index}`, source: sanitized.layout, rows: result.transactions },
+    };
+  }
+
+  const perFileOutcomes = await Promise.all(files.map((file, i) => processFile(file, i)));
+
+  const extractions: Extraction[] = [];
+  let screenshotsUnrecognized = 0;
+  let unreadableTransactionCount = 0;
+  for (const outcome of perFileOutcomes) {
+    if (outcome.unrecognized) screenshotsUnrecognized++;
+    unreadableTransactionCount += outcome.unreadableRows;
+    if (outcome.extraction) extractions.push(outcome.extraction);
   }
 
   const sourcesDetected = [...new Set(extractions.map((e) => e.source))];

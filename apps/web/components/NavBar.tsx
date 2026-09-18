@@ -42,15 +42,23 @@ export function NavBar() {
   const pathname = usePathname();
   const router = useRouter();
 
+  // Production defect: this used to depend on `pathname` and re-run on
+  // every single navigation — since every destination here is fully
+  // dynamic (requireSession() + real Prisma queries, ~1-3s each per the
+  // route_data_fetch timings), that meant every tap anywhere in the app
+  // fired a fresh burst of five full-page background fetches competing
+  // with the actual navigation the user was waiting on for the same
+  // database connections, which is what made transaction saves and
+  // "Back to transactions" look hung or occasionally fail under load.
+  // Run once per mount instead — this still warms the cache for every
+  // destination "as soon as the nav bar mounts" (the original intent),
+  // it just doesn't repeat that burst on every subsequent navigation.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    // Skip the route we're already on — prefetching it can't help (its
-    // data is already rendered), and doing so risks the prefetch cache
-    // colliding with a same-page router.refresh() (e.g. after saving a
-    // North Star assumption edit) and serving stale data back.
     for (const item of ITEMS) {
       if (item.href !== pathname) router.prefetch(item.href);
     }
-  }, [router, pathname]);
+  }, []);
 
   return (
     <nav
